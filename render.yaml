@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: kephale-backend
+    env: node
+    region: frankfurt # Optional: Choose a region close to your users
+    buildCommand: npm install && npm run build --workspace=@kephale/backend
+    startCommand: npm run start:prod --workspace=@kephale/backend
+    envVars:
+      - key: NODE_VERSION
+        value: 20.x # Ensure we use a compatible Node.js version
+      - key: PORT
+        value: 4000
+      # Make sure to configure all your production secrets in the Render dashboard:
+      # - DATABASE_URL
+      # - JWT_SECRET
+      # - SUPABASE_URL / SUPABASE_KEY
+      # - STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET
+      # - CINETPAY_API_KEY / CINETPAY_SITE_ID

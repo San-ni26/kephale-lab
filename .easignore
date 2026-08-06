@@ -1,0 +1,13 @@
+# EAS Ignore - exclude non-mobile files to speed up upload and prevent build issues
+apps/backend
+apps/backend-legacy
+musique
+dump.sql
+infra
+.agents
+.claude
+*.log
+*.sql
+.turbo
+dist
+node_modules

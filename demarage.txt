@@ -1,0 +1,221 @@
+# ═══════════════════════════════════════════════════════════════
+# 🎵 KEPHALE — Guide de démarrage complet
+# ═══════════════════════════════════════════════════════════════
+#
+# STATUT :  ✅ Code compilé et validé
+#           ✅ 1411 packages installés
+#           ✅ Schéma Prisma généré (16 modèles)
+#           ✅ Backend démarre correctement
+#
+
+
+
+
+3. Sur un serveur Linux distant (Ubuntu / Debian) sans Docker
+Si vous déployez directement sur un serveur VPS/Ubuntu sans Docker, exécutez la commande suivante dans le terminal du serveur distant :
+
+bash
+sudo apt-get update && sudo apt-get install -y libchromaprint-tools ffmpeg
+
+
+
+
+
+
+# ───────────────────────────────────────────────────────────────
+# ÉTAPE 1 : Ouvrir Docker Desktop
+# ───────────────────────────────────────────────────────────────
+# → Télécharger sur https://www.docker.com/products/docker-desktop/
+# → Ouvrir l'application et attendre le statut "Engine running" (L'icône Docker doit être verte)
+
+
+
+il faut toujours lancer Docker en premier :
+docker-compose -f infra/docker-compose.yml up -d postgres redis minio
+
+
+
+
+# Une fois Docker Desktop lancé, vous pouvez utiliser normalement docker-compose
+docker-compose -f infra/docker-compose.yml up -d postgres redis minio
+
+ Réinitialiser le volume Docker MinIO (Recommandé en local)
+Si vous n'avez pas de données importantes conservées localement dans MinIO, 
+supprimez les volumes existants pour que MinIO puisse réinitialiser son stockage proprement :
+
+docker-compose -f infra/docker-compose.yml down -v
+docker-compose -f infra/docker-compose.yml up -d postgres redis minio
+
+
+# ───────────────────────────────────────────────────────────────
+# ÉTAPE 2 : Démarrer PostgreSQL + Redis
+# ───────────────────────────────────────────────────────────────
+# (depuis la racine du projet : /Users/paulkone/Desktop/app/app-kephale)
+
+docker-compose -f infra/docker-compose.yml up -d postgres redis minio
+
+# Vérifier que les containers tournent :
+docker-compose -f infra/docker-compose.yml ps
+
+# ───────────────────────────────────────────────────────────────
+# ÉTAPE 3 : Configurer les variables d'environnement
+# ───────────────────────────────────────────────────────────────
+# Le fichier apps/backend/.env a déjà été créé.
+# NOTE : Les adresses IP de développement (API_URL, S3_ENDPOINT, S3_BUCKET_PUBLIC_URL)
+# sont gérées automatiquement par notre script à chaque lancement (npm run dev).
+# Remplis les vraies valeurs pour :
+#   - GOOGLE_CLIENT_ID       → console.cloud.google.com
+#   - STRIPE_SECRET_KEY      → dashboard.stripe.com
+#   - LIVEKIT_API_KEY        → cloud.livekit.io
+#   - EXCHANGE_RATE_API_KEY  → openexchangerates.org
+#   - AWS_ACCESS_KEY_ID      → aws.amazon.com (ou utiliser MinIO local)
+
+# ───────────────────────────────────────────────────────────────
+# ÉTAPE 4 : Migrer la base de données
+# ───────────────────────────────────────────────────────────────
+cd packages/database
+npm run db:migrate
+cd ../..
+
+# Pour voir la DB dans une interface web :
+# npm run db:studio  (ouvre http://localhost:5555)
+
+# ───────────────────────────────────────────────────────────────
+# ÉTAPE 5 : Lancer le backend (Terminal 1)
+# ───────────────────────────────────────────────────────────────
+cd apps/backend
+npm run dev
+
+cd apps/backend
+npm run start
+
+npm run start:dev # ou npm run start
+
+
+# Remarque : Au démarrage, l'IP locale actuelle est détectée et appliquée.
+# Disponible sur :
+#   API    → http://localhost:4000
+#   Docs   → http://localhost:4000/docs
+#   Health → http://localhost:4000/health
+
+# ───────────────────────────────────────────────────────────────
+# ÉTAPE 6 : Lancer l'app mobile (Terminal 2)
+# ───────────────────────────────────────────────────────────────
+cd apps/mobile
+npm run dev 
+
+# Remarque : Détecte aussi l'IP locale automatiquement.
+# → Scanner le QR code avec l'app Expo Go sur ton téléphone
+# → Télécharger Expo Go : https://expo.dev/client
+
+# ───────────────────────────────────────────────────────────────
+# SERVICES DISPONIBLES (avec Docker)
+# ───────────────────────────────────────────────────────────────
+# PostgreSQL  → localhost:5432  (user: kephale, pwd: kephale_dev)
+# Redis       → localhost:6379
+# MinIO S3    → localhost:9000  (console: http://localhost:9001)
+# BullBoard   → http://localhost:3000/queues
+
+# ───────────────────────────────────────────────────────────────
+# ARRÊTER tous les services Docker
+# ───────────────────────────────────────────────────────────────
+docker-compose -f infra/docker-compose.yml down
+
+
+./start-rds.sh
+ 
+Email : admin@kephale.com
+Mot de passe : KephaleAdmin2026! (sera modifiable)
+Rôle : ADMIN
+
+
+
+
+
+
+
+
+Que faire maintenant pour tester sur TestFlight ?
+
+Puisque tout le backend (base de données, serveur, et stockage) est 100% dans le cloud, vous pouvez lancer votre build iOS !
+
+Dans un terminal, allez dans le dossier mobile et lancez la compilation avec EAS :
+
+bash
+cd apps/mobile
+eas build -p ios --profile production
+(Assurez-vous que le profil production ou celui que vous avez créé est configuré pour TestFlight dans eas.json)
+EAS va compiler l'application et générer un lien de téléchargement pour TestFlight.
+Étape 2 : Tester l'authentification et la musique
+Une fois le build terminé et téléchargé sur votre iPhone :
+
+Connectez-vous avec le compte créé (admin@kephale.com) ou créez un utilisateur test.
+Naviguez dans la musique :
+Les artistes, albums et titres servis par AWS MinIO devraient s'afficher.
+Cliquez sur Play : La musique devrait streamer directement depuis le cloud (pas besoin de Docker pour cette étape !).
+Étape 3 : Vérifier les paiements (si vous avez configuré Stripe)
+Allez dans la section Abonnement.
+Cliquez sur "Devenir Premium".
+Vous devriez être redirigé vers le checkout Stripe.
+Utilisez les numéros de carte test de Stripe pour vérifier que le paiement fonctionne et que votre statut Premium est activé côté serveur.
+
+
+
+
+
+
+
+
+Pour Android, vous avez deux excellentes options selon la façon dont vous souhaitez tester l'application :
+
+1. Créer un fichier APK (Le plus simple et rapide pour tester)
+C'est l'idéal pour l'installer directement sur votre téléphone Android ou l'envoyer à vos amis sans passer par le Play Store. D'après votre fichier eas.json, votre profil preview est déjà parfaitement configuré pour générer un APK !
+
+Dans le terminal, lancez :
+
+bash
+cd apps/mobile
+eas build -p android --profile preview
+À la fin du build, EAS vous donnera un lien ou un QR Code pour télécharger et installer le fichier .apk directement sur le téléphone.
+
+2. Créer un AAB pour Google Play Console (Si vous voulez utiliser le système de test officiel)
+Si votre but est de publier l'application en "Test Interne" ou "Test Fermé" sur le Google Play Store (l'équivalent de TestFlight chez Android), vous devez générer un format .aab.
+
+Lancez la commande avec le profil de production :
+
+bash
+cd apps/mobile
+eas build -p android --profile production
+À la fin, vous téléchargerez le fichier .aab que vous pourrez importer dans la Google Play Console.
+
+(Note : Dans les deux cas, l'application Android se connectera automatiquement à votre nouveau backend hébergé sur Prisma Compute !)
+
+21:05
+
+
+
+ Relancez la commande de build :
+bash
+cd apps/mobile
+npx eas build -p android --profile preview
+
+Exécutez simplement cette commande :
+bash
+npx eas-cli build -p android --profile preview
+
+
+2. Pour lancer le Build Android :
+L'erreur précédente venait du fait que la commande a été exécutée depuis la racine du monorepo au lieu du sous-dossier apps/mobile.
+
+De plus, pour éviter le calcul du fingerprint sur le monorepo, EAS recommande la variable EAS_SKIP_AUTO_FINGERPRINT=1.
+
+Copiez-collez cette commande exacte dans votre terminal :
+
+bash
+cd /Users/paulkone/Desktop/app/app-kephale/apps/mobile && EAS_SKIP_AUTO_FINGERPRINT=1 npx eas-cli build -p android --profile preview
+
+
+
+npx @prisma/cli@latest app deploy --app backend --prod --yes
+
+

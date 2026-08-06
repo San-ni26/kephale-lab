@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist"
+  },
+  "include": ["src/**/*", "seed_packs.ts", "update_packs.ts", "test-db*.ts", "fill-usernames.ts", "dedup-stagenames.ts"],
+  "exclude": ["node_modules", "dist"]
+}
