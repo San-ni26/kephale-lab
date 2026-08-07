@@ -59,43 +59,54 @@ export default function LiveRoomScreen() {
   
   const [isCamOn, setIsCamOn] = useState(true);
   const [isMicOn, setIsMicOn] = useState(true);
+  const [isConnecting, setIsConnecting] = useState(true);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
   // Initialize the room
   useEffect(() => {
     const initLive = async () => {
+      setIsConnecting(true);
+      setConnectionError(null);
       try {
         // First get live details to check if we are the artist
         const livesRes = await livesAPI.list();
         const currentLive = livesRes.data?.data?.find((l: any) => l.id === id);
-        if (currentLive) {
-          setLive(currentLive);
-          const isHost = currentLive.artist?.id === user?.artistProfile?.id || currentLive.artistId === user?.id;
-          setIsArtist(isHost);
+        if (!currentLive) {
+          setConnectionError('Live introuvable ou terminé.');
+          setIsConnecting(false);
+          return;
+        }
+        setLive(currentLive);
+        const isHost = currentLive.artist?.id === user?.artistProfile?.id || currentLive.artistId === user?.id;
+        setIsArtist(isHost);
 
-          if (isHost && currentLive.status === 'SCHEDULED') {
-            // Artist starting the live
-            const startRes = await livesAPI.start(id as string);
-            setToken(startRes.data.data.liveToken.token);
-            setServerUrl(startRes.data.data.liveToken.serverUrl);
-          } else {
-            // Viewer joining
-            const joinRes = await livesAPI.join(id as string);
-            setToken(joinRes.data.data.liveToken?.token || null);
-            setServerUrl(joinRes.data.data.liveToken?.serverUrl || null);
-          }
-          if (currentLive.mode === 'AUDIO') {
-            setIsCamOn(false);
-          }
+        if (isHost && currentLive.status === 'SCHEDULED') {
+          // Artist starting the live
+          const startRes = await livesAPI.start(id as string);
+          setToken(startRes.data.data.liveToken.token);
+          setServerUrl(startRes.data.data.liveToken.serverUrl);
+        } else if (currentLive.status === 'LIVE') {
+          // Viewer joining an active live
+          const joinRes = await livesAPI.join(id as string);
+          setToken(joinRes.data.data.liveToken?.token || null);
+          setServerUrl(joinRes.data.data.liveToken?.serverUrl || null);
+        }
+        // If SCHEDULED and not artist, no token needed (waiting screen)
+        if (currentLive.mode === 'AUDIO') {
+          setIsCamOn(false);
         }
       } catch (e: any) {
-        Alert.alert('Erreur', "Impossible de rejoindre ce live.");
-        router.back();
+        const msg = e?.response?.data?.error?.message || 'Impossible de rejoindre ce live.';
+        setConnectionError(msg);
+      } finally {
+        setIsConnecting(false);
       }
     };
     if (id && user) {
       initLive();
     }
   }, [id, user]);
+
 
   const handleEndLive = async () => {
     Alert.alert('Terminer', 'Voulez-vous vraiment terminer ce live ?', [
@@ -124,10 +135,23 @@ export default function LiveRoomScreen() {
     // In a real app we'd trigger a local floating heart animation here
   };
 
-  if (!live || (live.status === 'LIVE' && (!token || !serverUrl))) {
+  if (isConnecting) {
     return (
       <View style={styles.loadingContainer}>
-        <Text style={{color: '#FFF'}}>Connexion au live...</Text>
+        <Text style={{color: '#FF5A00', fontSize: 16, fontWeight: '700', marginBottom: 8}}>Connexion au live...</Text>
+        <Text style={{color: '#888', fontSize: 13}}>Chargement en cours</Text>
+      </View>
+    );
+  }
+
+  if (connectionError || !live) {
+    return (
+      <View style={styles.loadingContainer}>
+        <Ionicons name="warning-outline" size={48} color="#FF3B30" />
+        <Text style={{color: '#FFF', fontSize: 16, fontWeight: '700', marginTop: 16, textAlign: 'center'}}>{connectionError || 'Live introuvable'}</Text>
+        <TouchableOpacity onPress={() => router.back()} style={{marginTop: 24, backgroundColor: '#FF5A00', paddingHorizontal: 32, paddingVertical: 12, borderRadius: 24}}>
+          <Text style={{color: '#FFF', fontWeight: '700'}}>Retour</Text>
+        </TouchableOpacity>
       </View>
     );
   }

@@ -9,6 +9,7 @@ import Constants from 'expo-constants';
 import { ToastProvider } from '../src/components/ToastContext';
 import { CustomAlertProvider } from '../src/components/CustomAlertProvider';
 import { useAuthStore } from '../src/stores';
+import { useOfflineStore } from '../src/stores/offlineStore';
 import { initGlobalSocket, disconnectGlobalSocket } from '../src/lib/socket';
 
 const queryClient = new QueryClient({
@@ -44,8 +45,14 @@ export default function RootLayout() {
     return () => disconnectGlobalSocket();
   }, [isAuthenticated]);
 
+  // SÉCURITÉ : Nettoyage automatique des téléchargements expirés (> 30 jours)
+  useEffect(() => {
+    const { purgeExpiredDownloads } = useOfflineStore.getState();
+    purgeExpiredDownloads().catch(() => {});
+  }, []);
+
   if (!hydrated) {
-    return null; // Don't render until auth state is loaded from AsyncStorage
+    return null; // Ne pas rendre l'app tant que le state auth n'est pas hydraté
   }
 
   return (

@@ -17,13 +17,13 @@
   },
   "dependencies": {
     "@prisma/adapter-pg": "^6.19.3",
-    "@prisma/client": "^6.19.3",
     "pg": "^8.22.0"
   },
   "devDependencies": {
+    "@prisma/client": "^6.19.3",
     "@types/node": "^22.10.7",
     "@types/pg": "^8.20.3",
-    "prisma": "^6.2.1",
+    "prisma": "^6.19.3",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.3"
   }

@@ -2,7 +2,8 @@ import { Injectable, Inject } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { Redis } from 'ioredis';
 
-const ACCESS_CACHE_TTL = 300;
+const ACCESS_CACHE_TTL = 60; // 60s — révocation d'accès prise en compte rapidement
+
 
 @Injectable()
 export class AccessControlService {

@@ -105,10 +105,33 @@ export class TracksController {
     return { success: true, data: null };
   }
 
+  /**
+   * Sécurité : Rate-limit strict sur le streaming.
+   * Max 30 requêtes/minute — empêche le scraping automatisé des URLs.
+   */
   @Get(':id/stream')
   @UseGuards(AuthGuard)
+  @Throttle({ default: { ttl: 60000, limit: 30 } })
   async streamTrack(@Req() req: Request, @Param('id') id: string) {
     const data = await this.tracksService.streamTrack(req.user!.userId, id);
+    return { success: true, data };
+  }
+
+  /**
+   * Téléchargement offline sécurisé.
+   *
+   * SÉCURITÉ :
+   * - Auth obligatoire
+   * - Vérification achat/abonnement côté serveur
+   * - Rate-limit strict : max 10 downloads/heure par IP
+   * - URL pré-signée retournée (expire en 60s)
+   * - Audit trail enregistré en base
+   */
+  @Get(':id/download')
+  @UseGuards(AuthGuard)
+  @Throttle({ default: { ttl: 3600000, limit: 10 } })
+  async requestDownload(@Req() req: Request, @Param('id') id: string) {
+    const data = await this.tracksService.requestDownload(req.user!.userId, id);
     return { success: true, data };
   }
 

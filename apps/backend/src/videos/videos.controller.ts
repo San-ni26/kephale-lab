@@ -150,8 +150,21 @@ export class VideosController {
 
   @Get(':id/stream')
   @UseGuards(AuthGuard)
+  @Throttle({ default: { ttl: 60000, limit: 30 } })
   async streamVideo(@Req() req: Request, @Param('id') id: string) {
     const data = await this.videosService.streamVideo(req.user!.userId, id);
+    return { success: true, data };
+  }
+
+  /**
+   * Téléchargement offline vidéo sécurisé.
+   * Rate-limit : max 10 downloads/heure par IP.
+   */
+  @Get(':id/download')
+  @UseGuards(AuthGuard)
+  @Throttle({ default: { ttl: 3600000, limit: 10 } })
+  async requestDownload(@Req() req: Request, @Param('id') id: string) {
+    const data = await this.videosService.requestDownload(req.user!.userId, id);
     return { success: true, data };
   }
 

@@ -4,6 +4,7 @@
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
+    "postinstall": "node scripts/patch-expo-router.js",
     "predev": "node ../../scripts/update-ip.cjs",
     "start": "expo start",
     "dev": "expo start -c",
@@ -18,10 +19,12 @@
     "lint": "eslint src/"
   },
   "dependencies": {
+    "@config-plugins/react-native-webrtc": "^13.0.0",
     "@expo/vector-icons": "^15.0.3",
     "@gorhom/bottom-sheet": "^5.2.14",
     "@kephale/types": "*",
     "@livekit/react-native": "^2.5.0",
+    "@livekit/react-native-expo-plugin": "^1.0.2",
     "@livekit/react-native-webrtc": "^144.1.2",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@shopify/flash-list": "2.0.2",
@@ -59,6 +62,7 @@
     "react-native-calendars": "^1.1314.0",
     "react-native-gesture-handler": "~2.28.0",
     "react-native-mmkv": "^4.3.2",
+    "react-native-nitro-modules": "^0.23.0",
     "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
@@ -70,6 +74,7 @@
   "devDependencies": {
     "@babel/core": "^7.25.2",
     "@types/react": "~19.1.10",
+    "babel-preset-expo": "~54.0.0",
     "typescript": "^5.7.3"
   },
   "expo": {

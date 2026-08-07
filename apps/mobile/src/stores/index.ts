@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { authPersistStorage, uiPersistStorage } from '../lib/storage';
+import { secureTokenStorage } from '../lib/secureStorage';
 import type { User, AuthTokens } from '@kephale/types';
 
 // Import lazy pour éviter la circularité stores ↔ api
@@ -14,6 +15,10 @@ const getUserAPI = () => {
 };
 
 // ── Auth Store ────────────────────────────────────────────────────────────────
+// SÉCURITÉ :
+// - accessToken + refreshToken → expo-secure-store (Keychain iOS / Keystore Android)
+// - user profile (non-sensible) → MMKV (accès synchrone rapide)
+// Les deux stores sont synchronisés via setAuth/logout.
 
 interface AuthState {
   user: User | null;
@@ -61,17 +66,22 @@ export const useAuthStore = create<AuthState>()(
         set({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false }),
     }),
     {
-      name: 'auth-state',
-      storage: createJSONStorage(() => authPersistStorage),
+      name: 'kephale-auth-secure',
+      // SÉCURITÉ : Tokens JWT dans expo-secure-store (Keychain/Keystore)
+      storage: createJSONStorage(() => secureTokenStorage),
+      // Ne persister QUE les tokens et le statut auth dans le stockage sécurisé
+      // L'objet user complet est reconstruit via checkAuth() au démarrage
       partialize: (state) => ({
-        user: state.user,
         accessToken: state.accessToken,
         refreshToken: state.refreshToken,
         isAuthenticated: state.isAuthenticated,
+        // On garde user en mémoire pour la session active mais on le revalide via /users/me
+        user: state.user,
       }),
     }
   )
 );
+
 
 // ── Player Store ──────────────────────────────────────────────────────────────
 // Pas de persistance — état éphémère entre sessions

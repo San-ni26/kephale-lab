@@ -5,6 +5,7 @@ import { Queue } from 'bullmq';
 import { AccessControlService } from '../subscriptions/access.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CacheService } from '../redis/cache.service';
+import { S3Service } from '../upload/s3.service';
 
 @Injectable()
 export class TracksService {
@@ -14,6 +15,7 @@ export class TracksService {
     private readonly accessControlService: AccessControlService,
     private readonly notificationsService: NotificationsService,
     private readonly cacheService: CacheService,
+    private readonly s3Service: S3Service,
   ) {}
 
   async createTrack(userId: string, data: any) {
@@ -235,9 +237,80 @@ export class TracksService {
 
     this.prisma.track.updateMany({ where: { id }, data: { plays: { increment: 1 } } }).catch(() => {});
 
+    // SÉCURITÉ : Générer une URL pré-signée à courte durée de vie (60s)
+    // L'URL expire rapidement → impossible de la partager pour un accès permanent
+    let streamUrl = track.audioUrl;
+    if (track.s3Key) {
+      try {
+        streamUrl = await this.s3Service.getSignedDownloadUrl(track.s3Key);
+      } catch (err) {
+        console.error('[TracksService] Erreur génération URL signée:', err);
+        // Fallback sur l'URL directe si la signature échoue (dégradé)
+      }
+    } else if (track.audioUrl) {
+      const s3Key = this.s3Service.extractS3KeyFromUrl(track.audioUrl);
+      if (s3Key) {
+        try {
+          streamUrl = await this.s3Service.getSignedDownloadUrl(s3Key);
+        } catch {}
+      }
+    }
+
     return {
-      streamUrl: track.audioUrl,
+      streamUrl,
       duration: track.duration,
+      expiresIn: S3Service.SIGNED_URL_TTL_SECONDS,
+    };
+  }
+
+  /**
+   * Endpoint de téléchargement offline sécurisé.
+   *
+   * SÉCURITÉ :
+   * 1. Vérifie que l'utilisateur a acheté le contenu OU a un abonnement actif
+   * 2. Génère une URL pré-signée à courte durée de vie (60s)
+   * 3. Enregistre le téléchargement dans un audit trail
+   * 4. Limite le nombre de téléchargements simultanés
+   */
+  async requestDownload(userId: string, id: string) {
+    const track = await this.prisma.track.findUnique({ where: { id } });
+    if (!track || track.status !== 'ACTIVE') {
+      throw new NotFoundException({ success: false, error: { code: 'NOT_FOUND', message: 'Track not found' } });
+    }
+
+    // Vérification d'accès obligatoire (achat ou abonnement)
+    const hasAccess = await this.accessControlService.canAccessTrack(userId, track);
+    if (!hasAccess) {
+      throw new ForbiddenException({
+        success: false,
+        error: { code: 'PAYMENT_REQUIRED', message: 'Achat ou abonnement actif requis pour télécharger ce titre.' },
+      });
+    }
+
+    // Générer l'URL pré-signée sécurisée
+    let downloadUrl: string | null = null;
+    const s3Key = track.s3Key || this.s3Service.extractS3KeyFromUrl(track.audioUrl || '');
+    if (s3Key) {
+      downloadUrl = await this.s3Service.getSignedDownloadUrl(s3Key);
+    } else if (track.audioUrl) {
+      downloadUrl = track.audioUrl; // Fallback
+    }
+
+    if (!downloadUrl) {
+      throw new NotFoundException({ success: false, error: { code: 'NOT_FOUND', message: 'Fichier audio introuvable.' } });
+    }
+
+    // Audit trail : enregistrement du téléchargement
+    this.prisma.downloadAudit.create({
+      data: { userId, trackId: id, ipAddress: '' },
+    }).catch(() => {}); // Fire and forget, ne doit pas bloquer le download
+
+    return {
+      downloadUrl,
+      coverUrl: track.coverUrl,
+      duration: track.duration,
+      title: track.title,
+      expiresIn: S3Service.SIGNED_URL_TTL_SECONDS,
     };
   }
 

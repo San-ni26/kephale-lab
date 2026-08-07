@@ -146,6 +146,10 @@ export const tracksAPI = {
     api.get(`/tracks/${id}`),
   getStreamUrl: (id: string) =>
     api.get(`/tracks/${id}/stream`),
+  // SÉCURITÉ : Endpoint sécurisé pour le téléchargement offline
+  // Vérifie l'accès côté serveur et retourne une URL signée à courte durée de vie
+  getDownloadUrl: (id: string) =>
+    api.get(`/tracks/${id}/download`),
   play: (id: string) =>
     api.post(`/tracks/${id}/play`),
   create: (data: Record<string, unknown>) =>
@@ -235,6 +239,9 @@ export const videosAPI = {
     api.get(`/videos/${id}`),
   getStreamUrl: (id: string) =>
     api.get(`/videos/${id}/stream`),
+  // SÉCURITÉ : Endpoint sécurisé pour le téléchargement offline
+  getDownloadUrl: (id: string) =>
+    api.get(`/videos/${id}/download`),
   getComments: (id: string, params?: Record<string, unknown>) =>
     api.get(`/videos/${id}/comments`, { params }),
   create: (data: Record<string, unknown>) =>
@@ -258,7 +265,7 @@ export const livesAPI = {
   start: (id: string) => api.post(`/lives/${id}/start`),
   join: (id: string) => api.post(`/lives/${id}/join`),
   end: (id: string) => api.post(`/lives/${id}/end`),
-  list: () => api.get('/lives'),
+  list: (params?: { search?: string }) => api.get('/lives', { params }),
   like: (id: string) => api.post(`/lives/${id}/like`),
   gift: (id: string, data: { tokens: number; message?: string }) => api.post(`/lives/${id}/gift`, data),
   report: (id: string, data: { reason: string }) => api.post(`/lives/${id}/report`, data),

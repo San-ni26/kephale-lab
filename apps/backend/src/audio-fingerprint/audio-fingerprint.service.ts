@@ -157,7 +157,7 @@ export class AudioFingerprintService {
       cmd
         .output(outputPath)
         .on('end', () => resolve(outputPath))
-        .on('error', (err) => {
+        .on('error', (err: any) => {
           // Si le seek dépasse la durée, réessayer depuis le début
           if (startSec > 0) {
             ffmpeg(inputFilePath)

@@ -32,7 +32,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
             }
           : {}),
       });
-      pool.on('error', (err) => {
+      pool.on('error', (err: any) => {
         // Suppress idle closed logs as retry handles reconnecting smoothly
       });
       adapter = new PrismaPg(pool);

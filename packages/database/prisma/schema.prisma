@@ -43,6 +43,7 @@ model User {
   passwordResetTokens  PasswordResetToken[]
   purchases            Purchase[]
   refreshTokens        RefreshToken[]
+  downloadAudits       DownloadAudit[]
   subscription         Subscription?
   affinities           UserArtistAffinity[]
   videoViews           UserVideoView[]
@@ -201,6 +202,7 @@ model Track {
   playlistItems    PlaylistItem[]
   posts            Post[]
   purchases        Purchase[]
+  downloadAudits   DownloadAudit[]
   album            Album?            @relation(fields: [albumId], references: [id])
   artist           ArtistProfile     @relation(fields: [artistId], references: [id], onDelete: Cascade)
   reelsWithAudio   Video[]           @relation("VideoAudioTrack")
@@ -275,6 +277,7 @@ model Video {
   posts             Post[]
   purchases         Purchase[]
   viewers           UserVideoView[]
+  downloadAudits    DownloadAudit[]
   artist            ArtistProfile?    @relation(fields: [artistId], references: [id], onDelete: Cascade)
   audioTrack        Track?            @relation("VideoAudioTrack", fields: [audioTrackId], references: [id])
   user              User?             @relation("UserReels", fields: [userId], references: [id], onDelete: Cascade)
@@ -906,3 +909,24 @@ model TokenTransaction {
   @@map("token_transactions")
 }
 
+// ── Audit Trail des Téléchargements ──────────────────────────────────────────
+// SÉCURITÉ : Chaque téléchargement offline est enregistré pour :
+// - Audit de conformité DRM
+// - Détection d'abus (téléchargements massifs)
+// - Traçabilité légale en cas de violation de copyright
+model DownloadAudit {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trackId     String?
+  track       Track?    @relation(fields: [trackId], references: [id], onDelete: SetNull)
+  videoId     String?
+  video       Video?    @relation(fields: [videoId], references: [id], onDelete: SetNull)
+  ipAddress   String    @default("")
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([trackId])
+  @@index([videoId])
+  @@map("download_audits")
+}

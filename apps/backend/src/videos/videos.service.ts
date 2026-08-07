@@ -6,6 +6,7 @@ import { AudioFingerprintService } from '../audio-fingerprint/audio-fingerprint.
 import { randomUUID } from 'crypto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { S3Service } from '../upload/s3.service';
 
 @Injectable()
 export class VideosService {
@@ -15,6 +16,7 @@ export class VideosService {
     private readonly notificationsService: NotificationsService,
     private readonly audioFingerprintService: AudioFingerprintService,
     @InjectQueue('media-processing') private readonly mediaQueue: Queue,
+    private readonly s3Service: S3Service,
   ) {}
 
   async getVideos(userId: string | null, query: any, ip: string, sessionHeader?: string) {
@@ -244,7 +246,71 @@ export class VideosService {
       }, 403);
     }
 
-    return { streamUrl: video.videoUrl, duration: video.duration };
+    // SÉCURITÉ : Générer une URL pré-signée à courte durée de vie (60s)
+    let streamUrl = video.videoUrl;
+    if (video.s3Key) {
+      try {
+        streamUrl = await this.s3Service.getSignedDownloadUrl(video.s3Key);
+      } catch (err) {
+        console.error('[VideosService] Erreur génération URL signée:', err);
+      }
+    } else if (video.videoUrl) {
+      const s3Key = this.s3Service.extractS3KeyFromUrl(video.videoUrl);
+      if (s3Key) {
+        try {
+          streamUrl = await this.s3Service.getSignedDownloadUrl(s3Key);
+        } catch {}
+      }
+    }
+
+    return {
+      streamUrl,
+      duration: video.duration,
+      expiresIn: S3Service.SIGNED_URL_TTL_SECONDS,
+    };
+  }
+
+  /**
+   * Téléchargement offline vidéo sécurisé.
+   */
+  async requestDownload(userId: string, id: string) {
+    const video = await this.prisma.video.findUnique({ where: { id } });
+    if (!video || video.status !== 'ACTIVE') {
+      throw new NotFoundException({ success: false, error: { code: 'NOT_FOUND', message: 'Video not found' } });
+    }
+
+    const hasAccess = await this.accessControlService.canAccessVideo(userId, video as any);
+    if (!hasAccess) {
+      throw new ForbiddenException({
+        success: false,
+        error: { code: 'PAYMENT_REQUIRED', message: 'Achat ou abonnement actif requis pour télécharger cette vidéo.' },
+      });
+    }
+
+    const s3KeyVideo = (video as any).s3Key || this.s3Service.extractS3KeyFromUrl(video.videoUrl || '');
+    let downloadUrl: string | null = null;
+    if (s3KeyVideo) {
+      downloadUrl = await this.s3Service.getSignedDownloadUrl(s3KeyVideo);
+    } else if (video.videoUrl) {
+      downloadUrl = video.videoUrl;
+    }
+
+    if (!downloadUrl) {
+      throw new NotFoundException({ success: false, error: { code: 'NOT_FOUND', message: 'Fichier vidéo introuvable.' } });
+    }
+
+    // Audit trail
+    this.prisma.downloadAudit.create({
+      data: { userId, videoId: id, ipAddress: '' },
+    }).catch(() => {});
+
+    return {
+      downloadUrl,
+      thumbnailUrl: video.thumbnailUrl,
+      duration: video.duration,
+      title: video.title,
+      expiresIn: S3Service.SIGNED_URL_TTL_SECONDS,
+    };
   }
 
   async toggleLike(userId: string, id: string) {

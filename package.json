@@ -41,6 +41,8 @@
   "dependencies": {
     "@expo/config-plugins": "~54.0.5",
     "@prisma/client": "^6.19.3",
+    "patch-package": "^8.0.1",
+    "postinstall-postinstall": "^2.1.0",
     "react-native-reanimated": "~4.1.1"
   }
 }

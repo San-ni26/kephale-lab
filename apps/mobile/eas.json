@@ -16,15 +16,15 @@
         "buildType": "apk"
       },
       "env": {
-        "APP_ENV": "staging",
-        "EXPO_PUBLIC_API_URL": "https://p6j3vtzb7v85msqmjuhe59kg.ewr.prisma.build"
+        "APP_ENV": "preview",
+        "EXPO_PUBLIC_API_URL": "https://kephale-lab.onrender.com"
       }
     },
     "production": {
-      "autoIncrement": true,
+      "channel": "production",
       "env": {
         "APP_ENV": "production",
-        "EXPO_PUBLIC_API_URL": "https://p6j3vtzb7v85msqmjuhe59kg.ewr.prisma.build"
+        "EXPO_PUBLIC_API_URL": "https://kephale-lab.onrender.com"
       }
     }
   },

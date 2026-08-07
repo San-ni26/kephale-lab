@@ -256,6 +256,8 @@ export default function ChatScreen() {
 
   const pickMediaFromGallery = async () => {
     setAttachmentModalVisible(false);
+    // Wait for the modal to fully dismiss before launching the native picker
+    await new Promise(resolve => setTimeout(resolve, 350));
     try {
       const hasPerm = await requestMediaLibraryPermission();
       if (!hasPerm) return;
@@ -280,6 +282,8 @@ export default function ChatScreen() {
 
   const takeCameraPhoto = async () => {
     setAttachmentModalVisible(false);
+    // Wait for the modal to fully dismiss before launching the native camera
+    await new Promise(resolve => setTimeout(resolve, 350));
     try {
       const hasPerm = await requestCameraPermission();
       if (!hasPerm) return;
@@ -301,6 +305,8 @@ export default function ChatScreen() {
 
   const pickDocumentFile = async () => {
     setAttachmentModalVisible(false);
+    // Wait for the modal to fully dismiss before launching the native file picker
+    await new Promise(resolve => setTimeout(resolve, 350));
     try {
       const res = await DocumentPicker.getDocumentAsync({
         copyToCacheDirectory: true,
@@ -522,7 +528,7 @@ export default function ChatScreen() {
           style={styles.modalOverlay} 
           onPress={() => setAttachmentModalVisible(false)}
         >
-          <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
+          <View style={styles.modalContent}>
             <View style={styles.modalIndicator} />
             <Text style={styles.modalTitle}>Joindre un fichier</Text>
             
@@ -571,7 +577,7 @@ export default function ChatScreen() {
             >
               <Text style={styles.modalCloseText}>Annuler</Text>
             </TouchableOpacity>
-          </Pressable>
+          </View>
         </Pressable>
       </Modal>
     </SafeAreaView>

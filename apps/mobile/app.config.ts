@@ -61,12 +61,14 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       },
     ],
     // '@stripe/stripe-react-native',  // Requires dev client build (EAS), not Expo Go
+    '@livekit/react-native-expo-plugin',
+    '@config-plugins/react-native-webrtc',
   ],
   experiments: {
     typedRoutes: true,
   },
   extra: {
-    apiUrl: process.env.EXPO_PUBLIC_API_URL || process.env.API_URL || 'https://p6j3vtzb7v85msqmjuhe59kg.ewr.prisma.build',
+    apiUrl: process.env.EXPO_PUBLIC_API_URL || process.env.API_URL || 'https://kephale-lab.onrender.com',
     googleClientId: process.env.GOOGLE_CLIENT_ID || '',
     stripePublishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
     eas: {

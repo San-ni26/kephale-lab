@@ -22,3 +22,9 @@ packages/database/generated/
 apps/backend/dist-ncc/
 apps/backend/temp-deps/
 
+
+# Temporary build files
+apps/mobile/jdk17
+apps/mobile/jdk.tar.gz
+apps/mobile/eas_*
+

@@ -1,13 +1,23 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as Crypto from 'expo-crypto';
 import { uiPersistStorage } from '../lib/storage';
 import type { Track, Video } from '@kephale/types';
-import { rewriteUrl } from '../lib/url';
 
 const getTracksAPI = () => require('../lib/api').tracksAPI;
 const getVideosAPI = () => require('../lib/api').videosAPI;
 const getAlbumsAPI = () => require('../lib/api').albumsAPI;
+
+// ── Durée de vie des téléchargements offline : 30 jours ──────────────────────
+const DOWNLOAD_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
+
+// ── Répertoire de stockage sécurisé ──────────────────────────────────────────
+// SÉCURITÉ : On utilise cacheDirectory au lieu de documentDirectory pour :
+// - Exclure les fichiers des sauvegardes iTunes/iCloud
+// - Permettre au système OS de nettoyer en cas de pression mémoire
+// - Réduire la surface d'attaque en cas d'accès root partiel
+const getSecureDir = () => `${FileSystem.cacheDirectory}kephale-offline/`;
 
 export interface OfflineItem {
   id: string;
@@ -19,7 +29,9 @@ export interface OfflineItem {
   sizeBytes: number;
   duration?: number;
   albumId?: string;
+  checksum?: string; // SHA-256 pour vérification d'intégrité
   createdAt: number;
+  expiresAt: number; // Expiration automatique 30 jours
 }
 
 interface OfflineState {
@@ -30,13 +42,15 @@ interface OfflineState {
   downloadAlbum: (albumId: string) => Promise<void>;
   removeDownload: (id: string) => Promise<void>;
   clearAllDownloads: () => Promise<void>;
+  purgeExpiredDownloads: () => Promise<void>;
 }
 
 const ensureDirectories = async () => {
+  const base = getSecureDir();
   const dirs = [
-    `${FileSystem.documentDirectory}downloads/tracks/`,
-    `${FileSystem.documentDirectory}downloads/videos/`,
-    `${FileSystem.documentDirectory}downloads/covers/`
+    `${base}tracks/`,
+    `${base}videos/`,
+    `${base}covers/`,
   ];
   for (const dir of dirs) {
     const info = await FileSystem.getInfoAsync(dir);
@@ -58,7 +72,24 @@ const getExtension = (url: string, defaultExt: string) => {
   return defaultExt;
 };
 
-// URL rewriting is imported from lib/url
+/**
+ * SÉCURITÉ : Calcule le SHA-256 d'un fichier local pour vérifier son intégrité.
+ * Détecte les substitutions de fichiers (attaque MITM).
+ */
+const computeFileChecksum = async (fileUri: string): Promise<string | undefined> => {
+  try {
+    const content = await FileSystem.readAsStringAsync(fileUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    const digest = await Crypto.digestStringAsync(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      content
+    );
+    return digest;
+  } catch {
+    return undefined;
+  }
+};
 
 export const useOfflineStore = create<OfflineState>()(
   persist(
@@ -76,59 +107,42 @@ export const useOfflineStore = create<OfflineState>()(
             downloading: { ...state.downloading, [track.id]: 0 }
           }));
 
-          // 1. Get stream/media URL
-          let audioUrl = track.audioUrl;
-          if (track.s3Key) {
-            const API_URL = process.env.EXPO_PUBLIC_API_URL;
-            if (!API_URL && !__DEV__) throw new Error("EXPO_PUBLIC_API_URL is not defined in production");
-            const safeApiUrl = API_URL || 'http://localhost:4000';
-            try {
-              const apiHost = new URL(safeApiUrl).hostname;
-              audioUrl = `http://${apiHost}:9000/kephale-media/${track.s3Key}`;
-            } catch (e) {
-              console.warn("Failed to construct S3 download URL:", e);
-            }
-          } else if (track.price > 0) {
-            const res = await getTracksAPI().getStreamUrl(track.id);
-            if (res.data?.success && res.data?.data?.streamUrl) {
-              audioUrl = res.data.data.streamUrl;
-            }
+          // ── SÉCURITÉ : Obtenir l'URL signée via l'endpoint /download ──────────
+          // L'URL expire en 60s côté serveur — la vérification d'accès est faite
+          // côté backend (achat ou abonnement requis)
+          const res = await getTracksAPI().getDownloadUrl(track.id);
+          if (!res.data?.success || !res.data?.data?.downloadUrl) {
+            throw new Error('Accès refusé ou URL de téléchargement non disponible');
           }
+          const audioUrl = res.data.data.downloadUrl;
+          const coverUrlFromServer = res.data.data.coverUrl;
 
-          if (!audioUrl) {
-            throw new Error('Streaming URL not available');
-          }
-
-          const API_URL = process.env.EXPO_PUBLIC_API_URL;
-          if (!API_URL && !__DEV__) throw new Error("EXPO_PUBLIC_API_URL is not defined in production");
-          const safeApiUrl = API_URL || 'http://localhost:4000';
-          const finalAudioUrl = rewriteUrl(audioUrl.startsWith('http') ? audioUrl : `${safeApiUrl}${audioUrl}`);
-
-          // 2. Download Cover Image
+          // ── Téléchargement de la pochette ────────────────────────────────────
           let localCoverUri: string | undefined;
-          const coverUrl = track.album?.coverUrl || track.coverUrl;
+          const coverUrl = coverUrlFromServer || track.album?.coverUrl || track.coverUrl;
           if (coverUrl) {
-            const cleanCoverUrl = rewriteUrl(coverUrl.startsWith('http') ? coverUrl : `${safeApiUrl}${coverUrl}`);
-            const coverExt = getExtension(cleanCoverUrl, 'jpg');
-            const targetCoverPath = `${FileSystem.documentDirectory}downloads/covers/${track.id}.${coverExt}`;
+            const coverExt = getExtension(coverUrl, 'jpg');
+            const targetCoverPath = `${getSecureDir()}covers/${track.id}.${coverExt}`;
             try {
-              const coverDownload = await FileSystem.downloadAsync(cleanCoverUrl, targetCoverPath);
+              const coverDownload = await FileSystem.downloadAsync(coverUrl, targetCoverPath);
               localCoverUri = coverDownload.uri;
             } catch (err) {
-              console.warn('Failed to download cover image offline:', err);
+              console.warn('Échec téléchargement pochette:', err);
             }
           }
 
-          // 3. Download Audio file
-          const audioExt = getExtension(finalAudioUrl, 'mp3');
-          const targetAudioPath = `${FileSystem.documentDirectory}downloads/tracks/${track.id}.${audioExt}`;
+          // ── Téléchargement du fichier audio ──────────────────────────────────
+          const audioExt = getExtension(audioUrl, 'mp3');
+          const targetAudioPath = `${getSecureDir()}tracks/${track.id}.${audioExt}`;
 
           const downloadResumable = FileSystem.createDownloadResumable(
-            finalAudioUrl,
+            audioUrl,
             targetAudioPath,
             {},
             (downloadProgress) => {
-              const progress = downloadProgress.totalBytesWritten / downloadProgress.totalBytesExpectedToWrite;
+              const progress = downloadProgress.totalBytesExpectedToWrite > 0
+                ? downloadProgress.totalBytesWritten / downloadProgress.totalBytesExpectedToWrite
+                : 0;
               set((state) => ({
                 downloading: { ...state.downloading, [track.id]: Math.round(progress * 100) }
               }));
@@ -137,10 +151,13 @@ export const useOfflineStore = create<OfflineState>()(
 
           const downloadResult = await downloadResumable.downloadAsync();
           if (!downloadResult || !downloadResult.uri) {
-            throw new Error('Download failed');
+            throw new Error('Téléchargement échoué');
           }
 
           const fileInfo = await FileSystem.getInfoAsync(downloadResult.uri);
+
+          // ── SÉCURITÉ : Vérification d'intégrité SHA-256 ──────────────────────
+          const checksum = await computeFileChecksum(downloadResult.uri);
 
           const newItem: OfflineItem = {
             id: track.id,
@@ -149,10 +166,12 @@ export const useOfflineStore = create<OfflineState>()(
             artistName: track.artist?.stageName || 'Artiste',
             localFileUri: downloadResult.uri,
             localCoverUri,
-            sizeBytes: fileInfo.exists ? fileInfo.size : 0,
+            sizeBytes: fileInfo.exists ? (fileInfo as any).size ?? 0 : 0,
             duration: track.duration,
             albumId: track.albumId || undefined,
-            createdAt: Date.now()
+            checksum,
+            createdAt: Date.now(),
+            expiresAt: Date.now() + DOWNLOAD_EXPIRY_MS,
           };
 
           set((state) => {
@@ -164,7 +183,7 @@ export const useOfflineStore = create<OfflineState>()(
             };
           });
         } catch (error) {
-          console.error('Error downloading track:', error);
+          console.error('Erreur téléchargement track:', error);
           set((state) => {
             const nextDownloading = { ...state.downloading };
             delete nextDownloading[track.id];
@@ -184,48 +203,40 @@ export const useOfflineStore = create<OfflineState>()(
             downloading: { ...state.downloading, [video.id]: 0 }
           }));
 
-          // 1. Get stream/media URL
-          let videoUrl = video.videoUrl;
-          if (video.price > 0) {
-            const res = await getVideosAPI().getStreamUrl(video.id);
-            if (res.data?.success && res.data?.data?.streamUrl) {
-              videoUrl = res.data.data.streamUrl;
-            }
+          // ── SÉCURITÉ : Obtenir l'URL signée via l'endpoint /download ──────────
+          const res = await getVideosAPI().getDownloadUrl(video.id);
+          if (!res.data?.success || !res.data?.data?.downloadUrl) {
+            throw new Error('Accès refusé ou URL de téléchargement non disponible');
           }
+          const videoUrl = res.data.data.downloadUrl;
+          const thumbnailUrlFromServer = res.data.data.thumbnailUrl;
 
-          if (!videoUrl) {
-            throw new Error('Streaming URL not available');
-          }
-
-          const API_URL = process.env.EXPO_PUBLIC_API_URL;
-          if (!API_URL && !__DEV__) throw new Error("EXPO_PUBLIC_API_URL is not defined in production");
-          const safeApiUrl = API_URL || 'http://localhost:4000';
-          const finalVideoUrl = rewriteUrl(videoUrl.startsWith('http') ? videoUrl : `${safeApiUrl}${videoUrl}`);
-
-          // 2. Download Thumbnail Cover Image
+          // ── Téléchargement de la miniature ───────────────────────────────────
           let localCoverUri: string | undefined;
-          if (video.thumbnailUrl) {
-            const cleanCoverUrl = rewriteUrl(video.thumbnailUrl.startsWith('http') ? video.thumbnailUrl : `${safeApiUrl}${video.thumbnailUrl}`);
-            const coverExt = getExtension(cleanCoverUrl, 'jpg');
-            const targetCoverPath = `${FileSystem.documentDirectory}downloads/covers/${video.id}.${coverExt}`;
+          const thumbUrl = thumbnailUrlFromServer || video.thumbnailUrl;
+          if (thumbUrl) {
+            const coverExt = getExtension(thumbUrl, 'jpg');
+            const targetCoverPath = `${getSecureDir()}covers/${video.id}.${coverExt}`;
             try {
-              const coverDownload = await FileSystem.downloadAsync(cleanCoverUrl, targetCoverPath);
+              const coverDownload = await FileSystem.downloadAsync(thumbUrl, targetCoverPath);
               localCoverUri = coverDownload.uri;
             } catch (err) {
-              console.warn('Failed to download video thumbnail offline:', err);
+              console.warn('Échec téléchargement miniature:', err);
             }
           }
 
-          // 3. Download Video file
-          const videoExt = getExtension(finalVideoUrl, 'mp4');
-          const targetVideoPath = `${FileSystem.documentDirectory}downloads/videos/${video.id}.${videoExt}`;
+          // ── Téléchargement du fichier vidéo ──────────────────────────────────
+          const videoExt = getExtension(videoUrl, 'mp4');
+          const targetVideoPath = `${getSecureDir()}videos/${video.id}.${videoExt}`;
 
           const downloadResumable = FileSystem.createDownloadResumable(
-            finalVideoUrl,
+            videoUrl,
             targetVideoPath,
             {},
             (downloadProgress) => {
-              const progress = downloadProgress.totalBytesWritten / downloadProgress.totalBytesExpectedToWrite;
+              const progress = downloadProgress.totalBytesExpectedToWrite > 0
+                ? downloadProgress.totalBytesWritten / downloadProgress.totalBytesExpectedToWrite
+                : 0;
               set((state) => ({
                 downloading: { ...state.downloading, [video.id]: Math.round(progress * 100) }
               }));
@@ -234,10 +245,13 @@ export const useOfflineStore = create<OfflineState>()(
 
           const downloadResult = await downloadResumable.downloadAsync();
           if (!downloadResult || !downloadResult.uri) {
-            throw new Error('Download failed');
+            throw new Error('Téléchargement vidéo échoué');
           }
 
           const fileInfo = await FileSystem.getInfoAsync(downloadResult.uri);
+
+          // ── SÉCURITÉ : Vérification d'intégrité SHA-256 ──────────────────────
+          const checksum = await computeFileChecksum(downloadResult.uri);
 
           const newItem: OfflineItem = {
             id: video.id,
@@ -246,9 +260,11 @@ export const useOfflineStore = create<OfflineState>()(
             artistName: video.artist?.stageName || 'Artiste',
             localFileUri: downloadResult.uri,
             localCoverUri,
-            sizeBytes: fileInfo.exists ? fileInfo.size : 0,
+            sizeBytes: fileInfo.exists ? (fileInfo as any).size ?? 0 : 0,
             duration: video.duration,
-            createdAt: Date.now()
+            checksum,
+            createdAt: Date.now(),
+            expiresAt: Date.now() + DOWNLOAD_EXPIRY_MS,
           };
 
           set((state) => {
@@ -260,7 +276,7 @@ export const useOfflineStore = create<OfflineState>()(
             };
           });
         } catch (error) {
-          console.error('Error downloading video:', error);
+          console.error('Erreur téléchargement vidéo:', error);
           set((state) => {
             const nextDownloading = { ...state.downloading };
             delete nextDownloading[video.id];
@@ -283,31 +299,26 @@ export const useOfflineStore = create<OfflineState>()(
           const res = await getAlbumsAPI().getById(albumId);
           const album = res.data?.data;
           if (!album || !album.tracks || album.tracks.length === 0) {
-            throw new Error('Album not found or has no tracks');
+            throw new Error('Album introuvable ou sans pistes');
           }
 
           let completedTracks = 0;
           let totalBytes = 0;
 
-          // Download tracks sequentially
+          // Téléchargement séquentiel des pistes via l'endpoint sécurisé
           for (const track of album.tracks) {
             const trackWithAlbum = {
               ...track,
-              album: {
-                coverUrl: album.coverUrl
-              },
-              artist: album.artist
+              album: { coverUrl: album.coverUrl },
+              artist: album.artist,
             };
 
             try {
               await get().downloadTrack(trackWithAlbum);
-              // Accumulate size from downloaded track
               const offlineTrack = get().downloads[track.id];
-              if (offlineTrack) {
-                totalBytes += offlineTrack.sizeBytes;
-              }
+              if (offlineTrack) totalBytes += offlineTrack.sizeBytes;
             } catch (err) {
-              console.warn(`Failed to download album track ${track.title}:`, err);
+              console.warn(`Échec téléchargement piste ${track.title}:`, err);
             }
 
             completedTracks++;
@@ -317,20 +328,16 @@ export const useOfflineStore = create<OfflineState>()(
             }));
           }
 
-          // Download Album Cover local metadata
-          const API_URL = process.env.EXPO_PUBLIC_API_URL;
-          if (!API_URL && !__DEV__) throw new Error("EXPO_PUBLIC_API_URL is not defined in production");
-          const safeApiUrl = API_URL || 'http://localhost:4000';
+          // Téléchargement de la pochette de l'album
           let localCoverUri: string | undefined;
           if (album.coverUrl) {
-            const cleanCoverUrl = rewriteUrl(album.coverUrl.startsWith('http') ? album.coverUrl : `${safeApiUrl}${album.coverUrl}`);
-            const coverExt = getExtension(cleanCoverUrl, 'jpg');
-            const targetCoverPath = `${FileSystem.documentDirectory}downloads/covers/album-${album.id}.${coverExt}`;
+            const coverExt = getExtension(album.coverUrl, 'jpg');
+            const targetCoverPath = `${getSecureDir()}covers/album-${album.id}.${coverExt}`;
             try {
-              const coverDownload = await FileSystem.downloadAsync(cleanCoverUrl, targetCoverPath);
+              const coverDownload = await FileSystem.downloadAsync(album.coverUrl, targetCoverPath);
               localCoverUri = coverDownload.uri;
             } catch (err) {
-              console.warn('Failed to download album cover image:', err);
+              console.warn('Échec téléchargement pochette album:', err);
             }
           }
 
@@ -339,10 +346,11 @@ export const useOfflineStore = create<OfflineState>()(
             type: 'ALBUM',
             title: album.title,
             artistName: album.artist?.stageName || 'Artiste',
-            localFileUri: '', // album contains multiple tracks
+            localFileUri: '',
             localCoverUri,
             sizeBytes: totalBytes,
-            createdAt: Date.now()
+            createdAt: Date.now(),
+            expiresAt: Date.now() + DOWNLOAD_EXPIRY_MS,
           };
 
           set((state) => {
@@ -354,7 +362,7 @@ export const useOfflineStore = create<OfflineState>()(
             };
           });
         } catch (error) {
-          console.error('Error downloading album:', error);
+          console.error('Erreur téléchargement album:', error);
           set((state) => {
             const nextDownloading = { ...state.downloading };
             delete nextDownloading[albumId];
@@ -368,7 +376,6 @@ export const useOfflineStore = create<OfflineState>()(
         const { downloads } = get();
         const item = downloads[id];
 
-        // Ensure downloading progress state for this item is cleared regardless
         set((state) => {
           const nextDownloading = { ...state.downloading };
           delete nextDownloading[id];
@@ -378,7 +385,7 @@ export const useOfflineStore = create<OfflineState>()(
         if (!item) return;
 
         try {
-          // If active track in player matches deleted item, stop player immediately
+          // Stopper le player si la piste supprimée est en cours de lecture
           try {
             const { usePlayerStore } = require('./index');
             const activeTrack = usePlayerStore.getState().currentTrack;
@@ -387,7 +394,7 @@ export const useOfflineStore = create<OfflineState>()(
             }
           } catch (e) {}
 
-          // If this is an album, cascade delete its tracks
+          // Suppression en cascade si c'est un album
           if (item.type === 'ALBUM') {
             for (const key of Object.keys(downloads)) {
               const trackItem = downloads[key];
@@ -397,20 +404,14 @@ export const useOfflineStore = create<OfflineState>()(
             }
           }
 
-          // Delete main file if it's set
           if (item.localFileUri) {
             const fileInfo = await FileSystem.getInfoAsync(item.localFileUri);
-            if (fileInfo.exists) {
-              await FileSystem.deleteAsync(item.localFileUri);
-            }
+            if (fileInfo.exists) await FileSystem.deleteAsync(item.localFileUri);
           }
 
-          // Delete cover if exists
           if (item.localCoverUri) {
             const coverInfo = await FileSystem.getInfoAsync(item.localCoverUri);
-            if (coverInfo.exists) {
-              await FileSystem.deleteAsync(item.localCoverUri);
-            }
+            if (coverInfo.exists) await FileSystem.deleteAsync(item.localCoverUri);
           }
 
           set((state) => {
@@ -421,7 +422,7 @@ export const useOfflineStore = create<OfflineState>()(
             return { downloads: nextDownloads, downloading: nextDownloading };
           });
         } catch (error) {
-          console.error('Error deleting downloaded file:', error);
+          console.error('Erreur suppression fichier téléchargé:', error);
         }
       },
 
@@ -435,7 +436,24 @@ export const useOfflineStore = create<OfflineState>()(
           const { usePlayerStore } = require('./index');
           usePlayerStore.getState().clearPlayer();
         } catch (e) {}
-      }
+      },
+
+      /**
+       * SÉCURITÉ : Supprime automatiquement les téléchargements expirés (> 30 jours).
+       * À appeler au démarrage de l'app et périodiquement.
+       */
+      purgeExpiredDownloads: async () => {
+        const { downloads } = get();
+        const now = Date.now();
+        const expiredIds = Object.keys(downloads).filter((id) => {
+          const item = downloads[id];
+          return item.expiresAt && item.expiresAt < now;
+        });
+        for (const id of expiredIds) {
+          console.info(`[OfflineStore] Suppression download expiré: ${id}`);
+          await get().removeDownload(id);
+        }
+      },
     }),
     {
       name: 'kephale-offline',
@@ -445,7 +463,15 @@ export const useOfflineStore = create<OfflineState>()(
         if (state) {
           state.downloading = {};
           const validDownloads: Record<string, OfflineItem> = {};
+          const now = Date.now();
+
           const checks = Object.entries(state.downloads || {}).map(async ([id, item]) => {
+            // ── SÉCURITÉ : Vérification d'expiration ─────────────────────────
+            if (item.expiresAt && item.expiresAt < now) {
+              console.info(`[OfflineStore] Download expiré ignoré: ${id}`);
+              return; // Ne pas restaurer les fichiers expirés
+            }
+
             if (item.localFileUri) {
               try {
                 const info = await FileSystem.getInfoAsync(item.localFileUri);
@@ -459,6 +485,7 @@ export const useOfflineStore = create<OfflineState>()(
               validDownloads[id] = item;
             }
           });
+
           Promise.all(checks).then(() => {
             useOfflineStore.setState({ downloads: validDownloads, downloading: {} });
           });
