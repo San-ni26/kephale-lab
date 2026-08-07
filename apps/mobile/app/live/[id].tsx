@@ -244,7 +244,7 @@ function LiveContent({ live, isArtist, isCamOn, isMicOn, viewerCount, setViewerC
       setMessages(prev => [{
         id: donation.id,
         user: { name: 'Système' },
-        message: `${donation.fromUser?.name || 'Quelqu\\'un'} a offert un cadeau : ${donation.tokens} jetons ! ${donation.message ? '(' + donation.message + ')' : ''}`,
+        message: `${donation.fromUser?.name || "Quelqu'un"} a offert un cadeau : ${donation.tokens} jetons ! ${donation.message ? '(' + donation.message + ')' : ''}`,
         createdAt: new Date().toISOString()
       }, ...prev]);
     };
