@@ -486,14 +486,14 @@ export default function CreateReelStudioScreen() {
       } catch {
         try {
           result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+            mediaTypes: ['videos'],
             allowsEditing: false,
             quality: 0.8,
             videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
           });
         } catch {
           result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            mediaTypes: ['images', 'videos'],
             allowsEditing: false,
             quality: 0.8,
           });
@@ -569,14 +569,14 @@ export default function CreateReelStudioScreen() {
       } catch {
         try {
           result = await ImagePicker.launchCameraAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+            mediaTypes: ['videos'],
             allowsEditing: false,
             quality: 0.8,
             videoMaxDuration: 180,
           });
         } catch {
           result = await ImagePicker.launchCameraAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            mediaTypes: ['images', 'videos'],
             allowsEditing: false,
             quality: 0.8,
             videoMaxDuration: 180,
@@ -641,14 +641,14 @@ export default function CreateReelStudioScreen() {
       } catch {
         try {
           result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            mediaTypes: ['images'],
             allowsEditing: true,
             aspect: [9, 16],
             quality: 0.8,
           });
         } catch {
           result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            mediaTypes: ['images', 'videos'],
             allowsEditing: true,
             aspect: [9, 16],
             quality: 0.8,

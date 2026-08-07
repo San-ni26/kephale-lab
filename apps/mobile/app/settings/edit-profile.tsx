@@ -30,8 +30,7 @@ export default function EditProfileScreen() {
 
   const handlePickImage = async () => {
     try {
-      const hasPerm = await requestMediaLibraryPermission();
-      if (!hasPerm) return;
+      try { await ImagePicker.requestMediaLibraryPermissionsAsync(); } catch {}
 
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],

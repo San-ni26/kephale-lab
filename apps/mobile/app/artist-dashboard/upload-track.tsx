@@ -78,8 +78,7 @@ export default function UploadTrackScreen() {
 
   const handlePickCover = async () => {
     try {
-      const hasPerm = await requestMediaLibraryPermission();
-      if (!hasPerm) return;
+      try { await ImagePicker.requestMediaLibraryPermissionsAsync(); } catch {}
 
       let result: ImagePicker.ImagePickerResult;
       try {
@@ -92,14 +91,14 @@ export default function UploadTrackScreen() {
       } catch {
         try {
           result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            mediaTypes: ['images'],
             allowsEditing: true,
             aspect: [1, 1],
             quality: 0.8,
           });
         } catch {
           result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            mediaTypes: ['images', 'videos'],
             allowsEditing: true,
             aspect: [1, 1],
             quality: 0.8,

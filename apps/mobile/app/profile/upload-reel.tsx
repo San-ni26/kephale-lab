@@ -27,8 +27,7 @@ export default function UploadReelScreen() {
 
   const pickVideoFromGallery = async () => {
     try {
-      const hasPerm = await requestMediaLibraryPermission();
-      if (!hasPerm) return;
+      try { await ImagePicker.requestMediaLibraryPermissionsAsync(); } catch {}
 
       let result: ImagePicker.ImagePickerResult;
       try {
@@ -40,13 +39,13 @@ export default function UploadReelScreen() {
       } catch {
         try {
           result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+            mediaTypes: ['videos'],
             allowsEditing: false,
             quality: 0.9,
           });
         } catch {
           result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            mediaTypes: ['images', 'videos'],
             allowsEditing: false,
             quality: 0.9,
           });
@@ -116,14 +115,14 @@ export default function UploadReelScreen() {
       } catch {
         try {
           result = await ImagePicker.launchCameraAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+            mediaTypes: ['videos'],
             allowsEditing: false,
             quality: 0.9,
             videoMaxDuration: 180,
           });
         } catch {
           result = await ImagePicker.launchCameraAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            mediaTypes: ['images', 'videos'],
             allowsEditing: false,
             quality: 0.9,
             videoMaxDuration: 180,
@@ -185,14 +184,14 @@ export default function UploadReelScreen() {
       } catch {
         try {
           result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            mediaTypes: ['images'],
             allowsEditing: true,
             aspect: [9, 16],
             quality: 0.8,
           });
         } catch {
           result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            mediaTypes: ['images', 'videos'],
             allowsEditing: true,
             aspect: [9, 16],
             quality: 0.8,

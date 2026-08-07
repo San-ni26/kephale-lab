@@ -259,14 +259,24 @@ export default function ChatScreen() {
     // Wait for the modal to fully dismiss before launching the native picker
     await new Promise(resolve => setTimeout(resolve, 350));
     try {
-      const hasPerm = await requestMediaLibraryPermission();
-      if (!hasPerm) return;
+      try {
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      } catch {}
 
-      const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images', 'videos'],
-        allowsEditing: false,
-        quality: 0.85,
-      });
+      let res: ImagePicker.ImagePickerResult;
+      try {
+        res = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images', 'videos'],
+          allowsEditing: false,
+          quality: 0.85,
+        });
+      } catch {
+        res = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'],
+          allowsEditing: false,
+          quality: 0.85,
+        });
+      }
 
       if (!res.canceled && res.assets && res.assets.length > 0) {
         const asset = res.assets[0];
@@ -285,13 +295,24 @@ export default function ChatScreen() {
     // Wait for the modal to fully dismiss before launching the native camera
     await new Promise(resolve => setTimeout(resolve, 350));
     try {
-      const hasPerm = await requestCameraPermission();
-      if (!hasPerm) return;
+      try {
+        await ImagePicker.requestCameraPermissionsAsync();
+      } catch {}
 
-      const res = await ImagePicker.launchCameraAsync({
-        allowsEditing: false,
-        quality: 0.85,
-      });
+      let res: ImagePicker.ImagePickerResult;
+      try {
+        res = await ImagePicker.launchCameraAsync({
+          mediaTypes: ['images', 'videos'],
+          allowsEditing: false,
+          quality: 0.85,
+        });
+      } catch {
+        res = await ImagePicker.launchCameraAsync({
+          mediaTypes: ['images'],
+          allowsEditing: false,
+          quality: 0.85,
+        });
+      }
 
       if (!res.canceled && res.assets && res.assets.length > 0) {
         const asset = res.assets[0];

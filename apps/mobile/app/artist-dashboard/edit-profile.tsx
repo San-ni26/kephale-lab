@@ -48,8 +48,7 @@ export default function EditArtistProfileScreen() {
 
   const pickImage = async (type: 'avatar' | 'cover') => {
     try {
-      const hasPerm = await requestMediaLibraryPermission();
-      if (!hasPerm) return;
+      try { await ImagePicker.requestMediaLibraryPermissionsAsync(); } catch {}
 
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],

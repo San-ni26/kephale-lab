@@ -47,8 +47,9 @@ export default function UploadVideoScreen() {
 
   const pickVideoFromGallery = async () => {
     try {
-      const hasPerm = await requestMediaLibraryPermission();
-      if (!hasPerm) return;
+      try {
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      } catch {}
 
       let result: ImagePicker.ImagePickerResult;
       try {
@@ -61,14 +62,14 @@ export default function UploadVideoScreen() {
       } catch {
         try {
           result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+            mediaTypes: ['videos'],
             allowsEditing: false,
             quality: 0.8,
             videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
           });
         } catch {
           result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            mediaTypes: ['images', 'videos'],
             allowsEditing: false,
             quality: 0.8,
           });
@@ -128,8 +129,9 @@ export default function UploadVideoScreen() {
 
   const pickVideoFromCamera = async () => {
     try {
-      const hasPerm = await requestCameraPermission();
-      if (!hasPerm) return;
+      try {
+        await ImagePicker.requestCameraPermissionsAsync();
+      } catch {}
 
       let result: ImagePicker.ImagePickerResult;
       try {
@@ -144,14 +146,14 @@ export default function UploadVideoScreen() {
       } catch {
         try {
           result = await ImagePicker.launchCameraAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+            mediaTypes: ['videos'],
             allowsEditing: false,
             quality: 0.8,
             videoMaxDuration: 300,
           });
         } catch {
           result = await ImagePicker.launchCameraAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            mediaTypes: ['images', 'videos'],
             allowsEditing: false,
             quality: 0.8,
             videoMaxDuration: 300,
@@ -201,8 +203,9 @@ export default function UploadVideoScreen() {
 
   const handlePickThumbnail = async () => {
     try {
-      const hasPerm = await requestMediaLibraryPermission();
-      if (!hasPerm) return;
+      try {
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      } catch {}
 
       let result: ImagePicker.ImagePickerResult;
       try {
@@ -215,14 +218,14 @@ export default function UploadVideoScreen() {
       } catch {
         try {
           result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            mediaTypes: ['images'],
             allowsEditing: true,
             aspect: [16, 9],
             quality: 0.8,
           });
         } catch {
           result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            mediaTypes: ['images', 'videos'],
             allowsEditing: true,
             aspect: [16, 9],
             quality: 0.8,

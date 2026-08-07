@@ -4,14 +4,15 @@ import { Image } from 'expo-image';
 import { useLocalSearchParams, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useCameraPermissions } from 'expo-camera';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { livesAPI } from '../../src/lib/api';
 import { useAuthStore } from '../../src/stores/index';
-// Mock LiveKit for UI testing without native compilation
-const LiveKitRoom = ({ children }: any) => <>{children}</>;
-const useRoomContext = () => ({});
-// import { LiveKitRoom, useRoomContext, VideoTrack, AudioTrack } from '@livekit/react-native';
+import { getGlobalSocket } from '../../src/lib/socket';
+
+// Vrai LiveKit depuis la librairie native
+import { LiveKitRoom, useRoomContext, VideoTrack, useTracks, useLocalParticipant } from '@livekit/react-native';
+import { Track } from 'livekit-client';
 
 const FloatingHeart = ({ x, y, onComplete }: { x: number, y: number, onComplete: () => void }) => {
   const translateY = useRef(new RNAnimated.Value(0)).current;
@@ -61,6 +62,7 @@ export default function LiveRoomScreen() {
   const [isMicOn, setIsMicOn] = useState(true);
   const [isConnecting, setIsConnecting] = useState(true);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [viewerCount, setViewerCount] = useState(0);
 
   // Initialize the room
   useEffect(() => {
@@ -68,7 +70,6 @@ export default function LiveRoomScreen() {
       setIsConnecting(true);
       setConnectionError(null);
       try {
-        // First get live details to check if we are the artist
         const livesRes = await livesAPI.list();
         const currentLive = livesRes.data?.data?.find((l: any) => l.id === id);
         if (!currentLive) {
@@ -77,6 +78,7 @@ export default function LiveRoomScreen() {
           return;
         }
         setLive(currentLive);
+        setViewerCount(currentLive.viewerCount || 0);
         const isHost = currentLive.artist?.id === user?.artistProfile?.id || currentLive.artistId === user?.id;
         setIsArtist(isHost);
 
@@ -91,7 +93,7 @@ export default function LiveRoomScreen() {
           setToken(joinRes.data.data.liveToken?.token || null);
           setServerUrl(joinRes.data.data.liveToken?.serverUrl || null);
         }
-        // If SCHEDULED and not artist, no token needed (waiting screen)
+        
         if (currentLive.mode === 'AUDIO') {
           setIsCamOn(false);
         }
@@ -106,7 +108,6 @@ export default function LiveRoomScreen() {
       initLive();
     }
   }, [id, user]);
-
 
   const handleEndLive = async () => {
     Alert.alert('Terminer', 'Voulez-vous vraiment terminer ce live ?', [
@@ -127,12 +128,15 @@ export default function LiveRoomScreen() {
   };
 
   const likeMutation = useMutation({
-    mutationFn: () => livesAPI.like(id as string)
+    mutationFn: () => livesAPI.like(id as string),
+    onSuccess: () => {
+      if (live) setLive({ ...live, likesCount: (live.likesCount || 0) + 1 });
+    }
   });
 
   const handleDoubleTap = () => {
     likeMutation.mutate();
-    // In a real app we'd trigger a local floating heart animation here
+    // Socket emit possible if we want hearts to be broadcasted to all viewers
   };
 
   if (isConnecting) {
@@ -162,6 +166,8 @@ export default function LiveRoomScreen() {
       isArtist={isArtist} 
       isCamOn={isCamOn}
       isMicOn={isMicOn}
+      viewerCount={viewerCount}
+      setViewerCount={setViewerCount}
       onToggleCam={() => setIsCamOn(!isCamOn)}
       onToggleMic={() => setIsMicOn(!isMicOn)}
       onEndLive={handleEndLive}
@@ -188,15 +194,23 @@ export default function LiveRoomScreen() {
   );
 }
 
-// Inner component that has access to LiveKit context
-function LiveContent({ live, isArtist, isCamOn, isMicOn, onToggleCam, onToggleMic, onEndLive, onDoubleTap }: any) {
+// Inner component that has access to LiveKit context and Socket.IO
+function LiveContent({ live, isArtist, isCamOn, isMicOn, viewerCount, setViewerCount, onToggleCam, onToggleMic, onEndLive, onDoubleTap }: any) {
   const room = useRoomContext();
+  
+  // Remplacer l'ancienne CameraView par les Pistes (Tracks) LiveKit
+  const cameraTracks = useTracks([Track.Source.Camera]);
+  // Sélectionner la première piste caméra disponible (soit la locale si artiste, soit distante si spectateur)
+  const currentCamera = cameraTracks.length > 0 ? cameraTracks[0] : null;
+
   const [comment, setComment] = useState('');
   const [messages, setMessages] = useState<any[]>([]);
   const [permission, requestPermission] = useCameraPermissions();
   const [hearts, setHearts] = useState<{ id: string; x: number; y: number }[]>([]);
   
   const [showGifts, setShowGifts] = useState(false);
+  const { user } = useAuthStore();
+
   const GIFTS = [
     { id: 'star', name: 'Étoile', tokens: 10, icon: 'star', color: '#FCD34D' },
     { id: 'flash', name: 'Éclair', tokens: 25, icon: 'flash', color: '#FBBF24' },
@@ -208,28 +222,70 @@ function LiveContent({ live, isArtist, isCamOn, isMicOn, onToggleCam, onToggleMi
     { id: 'crown', name: 'Couronne', tokens: 1000, icon: 'ribbon', color: '#8B5CF6' },
   ];
   
+  // Permissions et configuration initiale
   useEffect(() => {
     if (isArtist && isCamOn && !permission?.granted) {
       requestPermission();
     }
   }, [isArtist, isCamOn, permission]);
 
+  // Socket.IO logic for Chat, Gifts, Viewer Count
+  useEffect(() => {
+    const socket = getGlobalSocket();
+    if (!socket) return;
+
+    socket.emit('live:join', live.id);
+
+    const handleHistory = (history: any[]) => setMessages(history);
+    const handleChat = (msg: any) => setMessages(prev => [msg, ...prev]);
+    const handleViewerCount = (data: { count: number }) => setViewerCount(data.count);
+    const handleDonation = (donation: any) => {
+      // Afficher une alerte ou animation pour le cadeau
+      setMessages(prev => [{
+        id: donation.id,
+        user: { name: 'Système' },
+        message: `${donation.fromUser?.name || 'Quelqu\\'un'} a offert un cadeau : ${donation.tokens} jetons ! ${donation.message ? '(' + donation.message + ')' : ''}`,
+        createdAt: new Date().toISOString()
+      }, ...prev]);
+    };
+
+    socket.on('live:chat_history', handleHistory);
+    socket.on('live:chat_message', handleChat);
+    socket.on('live:viewer_count', handleViewerCount);
+    socket.on('live:donation', handleDonation);
+
+    return () => {
+      socket.off('live:chat_history', handleHistory);
+      socket.off('live:chat_message', handleChat);
+      socket.off('live:viewer_count', handleViewerCount);
+      socket.off('live:donation', handleDonation);
+      socket.emit('live:leave', live.id);
+    };
+  }, [live.id]);
+
   const handleSendComment = () => {
     if (!comment.trim()) return;
-    // For now we just push locally. 
-    // In real app, we'd send via DataChannel `room.localParticipant.publishData`
-    setMessages(prev => [...prev, { id: Date.now().toString(), sender: 'Moi', text: comment }]);
+    const socket = getGlobalSocket();
+    if (socket) {
+      socket.emit('live:chat', { liveId: live.id, message: comment });
+    }
     setComment('');
   };
 
   const handleGift = async (gift: any) => {
     try {
       await livesAPI.gift(live.id, { tokens: gift.tokens, message: gift.name });
-      Alert.alert("Merci !", `Vous avez envoyé un(e) ${gift.name} à l'artiste.`);
       setShowGifts(false);
       // Mettre à jour le solde de jetons immédiatement
       if (user && typeof user.tokenBalance === 'number') {
         useAuthStore.getState().updateUser({ tokenBalance: user.tokenBalance - gift.tokens });
+      }
+      // Le socket emit "live:donate" est géré côté backend lors du call REST de l'API. 
+      // Mais on peut aussi l'envoyer direct via socket selon l'implémentation backend !
+      // En l'occurrence, le controller REST s'occupe de faire l'update et le websocket peut aussi servir.
+      const socket = getGlobalSocket();
+      if (socket) {
+        socket.emit('live:donate', { liveId: live.id, tokens: gift.tokens, message: gift.name });
       }
     } catch (e: any) {
       Alert.alert("Erreur", e.response?.data?.error?.message || "Impossible d'envoyer le cadeau.");
@@ -246,7 +302,7 @@ function LiveContent({ live, isArtist, isCamOn, isMicOn, onToggleCam, onToggleMi
     const { locationX, locationY } = e.nativeEvent;
     const id = Date.now().toString() + Math.random().toString();
     setHearts(prev => [...prev, { id, x: locationX, y: locationY }]);
-    onDoubleTap(); // Declenche le like
+    onDoubleTap();
   };
 
   return (
@@ -267,8 +323,9 @@ function LiveContent({ live, isArtist, isCamOn, isMicOn, onToggleCam, onToggleMi
             </View>
           ) : !isCamOn ? (
             <Ionicons name="mic" size={100} color="#333" />
-          ) : isArtist && permission?.granted ? (
-            <CameraView style={StyleSheet.absoluteFillObject} facing="front" />
+          ) : currentCamera ? (
+            // Vidéo LiveKit connectée au réseau (diffusion P2P/SFU)
+            <VideoTrack trackRef={currentCamera} style={StyleSheet.absoluteFillObject} objectFit="cover" />
           ) : (
             <Ionicons name="videocam" size={100} color="#333" />
           )}
@@ -297,7 +354,7 @@ function LiveContent({ live, isArtist, isCamOn, isMicOn, onToggleCam, onToggleMi
           <View>
             <Text style={styles.hostName}>{live.artist?.stageName}</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <Text style={styles.viewerCount}>{live.viewerCount} spec. • {live.likesCount}</Text>
+              <Text style={styles.viewerCount}>{viewerCount} spec. • {live.likesCount}</Text>
               <Ionicons name="heart" size={11} color="#FF3B30" />
             </View>
           </View>
@@ -348,8 +405,8 @@ function LiveContent({ live, isArtist, isCamOn, isMicOn, onToggleCam, onToggleMi
             contentContainerStyle={{ flexDirection: 'column-reverse' }}
             renderItem={({ item }) => (
               <View style={styles.messageRow}>
-                <Text style={styles.messageSender}>{item.sender}:</Text>
-                <Text style={styles.messageText}>{item.text}</Text>
+                <Text style={styles.messageSender}>{item.user?.name || item.userName || 'Système'}:</Text>
+                <Text style={styles.messageText}>{item.message}</Text>
               </View>
             )}
           />
@@ -427,7 +484,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 10,
   },
-  hostInfo: {
+  artistInfo: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -467,7 +524,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 8,
-    backgroundColor: 'rgba(0,0,0,0.25)', // Plus transparent
+    backgroundColor: 'rgba(0,0,0,0.25)',
     alignSelf: 'flex-start',
     paddingHorizontal: 12,
     paddingVertical: 6,
