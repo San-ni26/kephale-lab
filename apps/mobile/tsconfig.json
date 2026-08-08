@@ -8,13 +8,21 @@
     "paths": {
       "@kephale/types": [
         "../../packages/types/src/index.ts"
+      ],
+      "expo-file-system/legacy": [
+        "node_modules/expo-file-system/build/legacy/index.d.ts"
       ]
     }
   },
   "include": [
-    "**/*.ts",
-    "**/*.tsx",
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "src/**/*.ts",
+    "src/**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules"
   ]
 }

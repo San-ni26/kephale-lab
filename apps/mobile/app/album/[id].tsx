@@ -235,7 +235,7 @@ export default function PublicAlbumScreen() {
               </Text>
               {album.price > 0 && (
                 <Text style={{ color: '#FF5A00', fontSize: 13, marginTop: 4, fontWeight: '600' }}>
-                  {album._count?.purchases || 0} vente{album._count?.purchases > 1 ? 's' : ''}
+                  {album._count?.purchases ?? 0} vente{(album._count?.purchases ?? 0) > 1 ? 's' : ''}
                 </Text>
               )}
             </View>
@@ -306,7 +306,7 @@ export default function PublicAlbumScreen() {
                 <TouchableOpacity 
                   key={track.id} 
                   style={styles.trackRow}
-                  onPress={() => handlePlayTrack(track)}
+                  onPress={() => handlePlayTrack(track, tracks)}
                 >
                   <Text style={styles.trackIndex}>{index + 1}</Text>
                   <View style={styles.trackInfo}>
@@ -314,7 +314,7 @@ export default function PublicAlbumScreen() {
                     <Text style={styles.trackArtist}>{album.artist?.stageName}</Text>
                     {track.price > 0 && (
                       <Text style={{ color: '#A0A0A0', fontSize: 11, marginTop: 2 }}>
-                        {track._count?.purchases || 0} vente{track._count?.purchases > 1 ? 's' : ''}
+                        {track._count?.purchases ?? 0} vente{(track._count?.purchases ?? 0) > 1 ? 's' : ''}
                       </Text>
                     )}
                   </View>

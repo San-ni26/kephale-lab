@@ -61,7 +61,7 @@ export default function WelcomeScreen() {
     clientId: isConfigured ? Constants.expoConfig?.extra?.googleClientId : 'dummy',
     iosClientId: isConfigured ? Constants.expoConfig?.extra?.googleClientId : 'dummy',
     androidClientId: isConfigured ? Constants.expoConfig?.extra?.googleClientId : 'dummy',
-    redirectUri: AuthSession.makeRedirectUri({ useProxy: true, projectNameForProxy: '@paulkone/kephale' }),
+    redirectUri: AuthSession.makeRedirectUri(),
   });
 
   useEffect(() => {

@@ -24,7 +24,12 @@ apps/backend/temp-deps/
 
 
 # Temporary build files
+build/
+**/build/
 apps/mobile/jdk17
 apps/mobile/jdk.tar.gz
 apps/mobile/eas_*
+*.MP4
+*.mp4
+test-audio-fingerprint.mjs
 

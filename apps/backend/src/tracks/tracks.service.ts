@@ -144,6 +144,9 @@ export class TracksService {
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: {
+          artist: {
+            select: { id: true, stageName: true, avatar: true, isVerified: true },
+          },
           album: { select: { id: true, title: true } },
           _count: { select: { likes: true, purchases: true } },
         },

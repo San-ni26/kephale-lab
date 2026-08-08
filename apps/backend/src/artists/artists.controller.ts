@@ -45,7 +45,12 @@ const ArtistQuerySchema = z.object({
 const ArtistTracksQuerySchema = z.object({
   page: z.coerce.number().min(1).default(1),
   limit: z.coerce.number().min(1).max(50).default(20),
-  isSingle: z.enum(['true', 'false']).optional().transform((val) => val === 'true'),
+  isSingle: z
+    .preprocess((val) => {
+      if (val === 'true' || val === true) return true;
+      if (val === 'false' || val === false) return false;
+      return undefined;
+    }, z.boolean().optional()),
   sort: z.enum(['newest', 'popular', 'price_asc']).default('newest'),
 });
 

@@ -49,7 +49,7 @@ function SimpleReelItem({
   isNearActive, 
   onOpenComments 
 }: { 
-  item: Video & { hasLiked?: boolean }; 
+  item: Video & { hasLiked?: boolean; likes?: any[] }; 
   isActive: boolean; 
   isNearActive: boolean; 
   onOpenComments: (id: string) => void 

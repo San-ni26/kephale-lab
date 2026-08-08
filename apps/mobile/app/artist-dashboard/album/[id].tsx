@@ -7,7 +7,7 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { albumsAPI, artistsAPI } from '../../../src/lib/api';
+import { albumsAPI, artistsAPI, tracksAPI } from '../../../src/lib/api';
 import { useAuthStore } from '../../../src/stores';
 import type { Track, Album } from '@kephale/types';
 
@@ -27,28 +27,14 @@ export default function ArtistAlbumDetailScreen() {
   const album = albumData?.data?.data;
   const albumTracks: Track[] = album?.tracks || [];
 
-  // Get Artist Tracks to add
-  const { data: artistTracksData } = useQuery({
+  // Get Artist Tracks to add to album
+  const { data: myTracksData, isLoading: isLoadingMyTracks } = useQuery({
     queryKey: ['my-tracks'],
-    queryFn: () => artistsAPI.getTracks('me', { limit: 100 }), // The API requires an artist ID, 'me' might fail if it expects UUID.
+    queryFn: () => tracksAPI.mine({ limit: 100 }),
     enabled: isAddModalVisible,
   });
-  
-  // Wait, let's fix that. In artistsAPI: getDashboard gives us the artist id.
-  const { data: artistData } = useQuery({
-    queryKey: ['artist-profile-me'],
-    queryFn: () => artistsAPI.getDashboard(),
-    enabled: user?.role === 'ARTIST',
-  });
-  const artistId = artistData?.data?.data?.artist?.id;
-  
-  const { data: tracksData } = useQuery({
-    queryKey: ['artist-tracks', artistId],
-    queryFn: () => artistsAPI.getTracks(artistId as string, { limit: 100 }),
-    enabled: isAddModalVisible && !!artistId,
-  });
 
-  const availableTracks: Track[] = tracksData?.data?.data || [];
+  const availableTracks: Track[] = myTracksData?.data?.data || [];
   // Filter out tracks that are already in the album
   const tracksToAdd = availableTracks.filter(t => t.albumId !== id);
 

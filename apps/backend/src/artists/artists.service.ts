@@ -481,7 +481,11 @@ export class ArtistsService {
       : { createdAt: 'desc' };
 
     const where: any = { artistId: id, status: { not: 'INACTIVE' } };
-    if (isSingle) where.albumId = null;
+    if (isSingle === true) {
+      where.albumId = null;
+    } else if (isSingle === false) {
+      where.albumId = { not: null };
+    }
 
     const [total, tracks] = await Promise.all([
       this.prisma.track.count({ where }),
@@ -491,6 +495,9 @@ export class ArtistsService {
         skip,
         take: limit,
         include: {
+          artist: {
+            select: { id: true, stageName: true, avatar: true, isVerified: true },
+          },
           album: { select: { id: true, title: true, coverUrl: true } },
           _count: { select: { likes: true, purchases: true } },
         },
@@ -515,10 +522,14 @@ export class ArtistsService {
       where: { artistId: id, status: 'ACTIVE' },
       orderBy: { releaseDate: 'desc' },
       include: {
+        artist: { select: { id: true, stageName: true, avatar: true, coverImage: true, isVerified: true } },
         tracks: {
           where: { status: { not: 'INACTIVE' } },
           orderBy: { createdAt: 'asc' },
-          select: { id: true, title: true, coverUrl: true, duration: true, price: true, plays: true },
+          include: {
+            artist: { select: { id: true, stageName: true, avatar: true, isVerified: true } },
+            _count: { select: { likes: true, purchases: true } },
+          },
         },
         _count: { select: { tracks: true, purchases: true } },
       },

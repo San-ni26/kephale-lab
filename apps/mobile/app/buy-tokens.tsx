@@ -42,11 +42,11 @@ export default function BuyTokensScreen() {
     try {
       setIsProcessing(true);
 
-      const response = await purchasesAPI.buyTokens({
-        packId: selectedPack,
-        paymentProvider: paymentProvider,
-        currency: selectedCurrency,
-      });
+      const response = await paymentsAPI.buyTokens(
+        selectedPack,
+        selectedCurrency,
+        paymentProvider
+      );
 
       const paymentUrl = response.data?.paymentUrl || response.data?.data?.paymentUrl;
 

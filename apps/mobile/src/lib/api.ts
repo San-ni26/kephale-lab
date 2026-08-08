@@ -127,7 +127,7 @@ export const authAPI = {
     api.post('/auth/google', { idToken }),
   loginWithEmail: (data: { email: string; password: string }) =>
     api.post('/auth/login', data),
-  registerWithEmail: (data: { email: string; password: string; name: string }) =>
+  registerWithEmail: (data: { email: string; password: string; name: string; username?: string; phoneNumber?: string }) =>
     api.post('/auth/register', data),
   refresh: (refreshToken: string) =>
     api.post('/auth/refresh', { refreshToken }),

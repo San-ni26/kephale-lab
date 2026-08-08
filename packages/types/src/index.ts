@@ -9,6 +9,7 @@ export interface User {
   name: string;
   username: string;
   avatar?: string;
+  phoneNumber?: string;
   role: UserRole;
   tokenBalance: number;
   createdAt: string;

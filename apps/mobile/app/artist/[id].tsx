@@ -39,10 +39,24 @@ export default function ArtistPublicPage() {
   const [sending, setSending] = useState(false);
 
   const handlePlayTrack = async (track: any, allTracks: any[]) => {
-    if (track.price > 0) {
+    const trackWithArtist = {
+      ...track,
+      artist: track.artist || { id: artist?.id, stageName: artist?.stageName, avatar: artist?.avatar },
+    };
+    const allTracksWithArtist = allTracks.map((t) => ({
+      ...t,
+      artist: t.artist || { id: artist?.id, stageName: artist?.stageName, avatar: artist?.avatar },
+    }));
+
+    if (track.price > 0 && !isTrackPurchased(track.id)) {
       try {
-        await tracksAPI.getStreamUrl(track.id);
-        setTrack(track, allTracks);
+        const streamRes = await tracksAPI.getStreamUrl(track.id);
+        const streamUrl = streamRes.data?.data?.streamUrl;
+        const playableTrack = {
+          ...trackWithArtist,
+          ...(streamUrl ? { audioUrl: streamUrl } : {}),
+        };
+        setTrack(playableTrack, allTracksWithArtist);
       } catch (err: any) {
         if (err.response?.status === 401) {
           Alert.alert('Connexion requise', 'Vous devez être connecté pour écouter ou acheter ce morceau.', [
@@ -75,7 +89,7 @@ export default function ArtistPublicPage() {
         }
       }
     } else {
-      setTrack(track, allTracks);
+      setTrack(trackWithArtist, allTracksWithArtist);
     }
   };
 
@@ -115,8 +129,8 @@ export default function ArtistPublicPage() {
 
   // Tracks
   const { data: tracksData, isLoading: tracksLoading } = useQuery({
-    queryKey: ['artist-tracks', id, { isSingle: true }],
-    queryFn: () => artistsAPI.getTracks(id!, { limit: 30, isSingle: true }),
+    queryKey: ['artist-tracks', id],
+    queryFn: () => artistsAPI.getTracks(id!, { limit: 50 }),
     enabled: !!id && tab === 'musique',
   });
 
@@ -459,7 +473,7 @@ export default function ArtistPublicPage() {
                       </Text>
                       {album.price > 0 && (
                         <Text style={{ color: '#FF5A00', fontSize: 11, marginTop: 2, fontWeight: '600' }}>
-                          {album._count?.purchases || 0} vente{album._count?.purchases > 1 ? 's' : ''}
+                          {album._count?.purchases ?? 0} vente{(album._count?.purchases ?? 0) > 1 ? 's' : ''}
                         </Text>
                       )}
                     </TouchableOpacity>
@@ -468,8 +482,8 @@ export default function ArtistPublicPage() {
               </>
             )}
 
-            {/* Singles */}
-            <Text style={styles.subTitle}>Singles</Text>
+            {/* Morceaux */}
+            <Text style={styles.subTitle}>Morceaux</Text>
             {tracksLoading ? (
               <ActivityIndicator color="#FF5A00" style={{ marginTop: 20 }} />
             ) : tracks.length === 0 ? (
@@ -494,7 +508,7 @@ export default function ArtistPublicPage() {
                     <Text style={styles.trackMeta}>{track.plays.toLocaleString()} écoutes</Text>
                     {track.price > 0 && (
                       <Text style={{ color: '#A0A0A0', fontSize: 11, marginTop: 2 }}>
-                        {track._count?.purchases || 0} vente{track._count?.purchases > 1 ? 's' : ''}
+                        {track._count?.purchases ?? 0} vente{(track._count?.purchases ?? 0) > 1 ? 's' : ''}
                       </Text>
                     )}
                   </View>

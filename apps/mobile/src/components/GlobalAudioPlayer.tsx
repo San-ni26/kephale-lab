@@ -63,19 +63,29 @@ export default function GlobalAudioPlayer() {
         try {
           // Check if we have the track downloaded offline
           const offlineItem = useOfflineStore.getState().downloads[currentTrack.id];
+          const rawAudioUrl = currentTrack.audioUrl || '';
           let uri = (offlineItem && offlineItem.localFileUri)
             ? offlineItem.localFileUri
-            : (currentTrack.audioUrl.startsWith('http') 
-              ? currentTrack.audioUrl 
-              : `${API_URL}${currentTrack.audioUrl}`);
+            : (rawAudioUrl.startsWith('http') 
+              ? rawAudioUrl 
+              : rawAudioUrl 
+                ? `${API_URL}${rawAudioUrl}`
+                : '');
+
+          if (!uri) {
+            console.warn("GlobalAudioPlayer - No valid audio URL found for track:", currentTrack.id);
+            usePlayerStore.getState().clearPlayer();
+            isSyncingRef.current = false;
+            return;
+          }
 
           // Validate if local file URI actually exists on disk
           if (uri.startsWith('file://')) {
             const fileInfo = await FileSystem.getInfoAsync(uri);
             if (!fileInfo.exists) {
               console.warn("GlobalAudioPlayer - Downloaded file no longer exists on disk:", uri);
-              if (currentTrack.audioUrl && !currentTrack.audioUrl.startsWith('file://')) {
-                uri = currentTrack.audioUrl.startsWith('http') ? currentTrack.audioUrl : `${API_URL}${currentTrack.audioUrl}`;
+              if (rawAudioUrl && !rawAudioUrl.startsWith('file://')) {
+                uri = rawAudioUrl.startsWith('http') ? rawAudioUrl : `${API_URL}${rawAudioUrl}`;
               } else {
                 console.warn("GlobalAudioPlayer - No remote fallback URL available, stopping player.");
                 usePlayerStore.getState().clearPlayer();

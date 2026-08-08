@@ -618,7 +618,7 @@ export default function LibraryScreen() {
             ) : playlists.length === 0 ? (
               <Text style={{ color: '#A0A0A0', textAlign: 'center', marginTop: 20 }}>Aucune playlist pour le moment.</Text>
             ) : (
-              playlists.map((playlist) => (
+              playlists.map((playlist: any) => (
                 <TouchableOpacity
                   key={playlist.id}
                   style={styles.trackRow}

@@ -22,7 +22,7 @@ interface Comment {
 
 interface VideoCommentsSheetProps {
   videoId: string | null;
-  sheetRef: any; // Not used anymore but kept for prop signature compatibility if needed
+  sheetRef?: any;
   onClose: () => void;
   visible?: boolean;
 }
