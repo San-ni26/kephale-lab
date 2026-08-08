@@ -48,6 +48,8 @@
     "helmet": "^8.3.0",
     "ioredis": "^5.11.1",
     "jsonwebtoken": "^9.0.3",
+    "kephale-audio-matcher": "file:./src/audio-fingerprint/cpp-matcher",
+    "node-addon-api": "^8.9.1",
     "pg": "^8.13.1",
     "reflect-metadata": "^0.2.2",
     "resend": "^6.18.1",

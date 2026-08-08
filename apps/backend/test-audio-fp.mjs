@@ -57,23 +57,46 @@ async function generateFingerprint(filePath) {
   }
 }
 
-// ── Comparaison bit à bit des empreintes ─────────────────────────────────────
+// ── Comparaison bit à bit des empreintes (Sliding Window) ────────────────────
+function popcount32(n) {
+  n = n >>> 0;
+  n = n - ((n >>> 1) & 0x55555555);
+  n = (n & 0x33333333) + ((n >>> 2) & 0x33333333);
+  n = (n + (n >>> 4)) & 0x0f0f0f0f;
+  return (n * 0x01010101) >>> 24;
+}
+
 function compareFingerprints(fp1, fp2) {
   if (!fp1 || !fp2) return 0;
   const arr1 = Array.isArray(fp1) ? fp1 : String(fp1).split(',').map(Number);
   const arr2 = Array.isArray(fp2) ? fp2 : String(fp2).split(',').map(Number);
-  const minLen = Math.min(arr1.length, arr2.length);
-  if (minLen === 0) return 0;
+  
+  if (arr1.length === 0 || arr2.length === 0) return 0;
 
-  let matching = 0, total = 0;
-  for (let i = 0; i < minLen; i++) {
-    const xor = (arr1[i] >>> 0) ^ (arr2[i] >>> 0);
-    let bits = 0, v = xor;
-    while (v) { bits += v & 1; v >>>= 1; }
-    matching += (32 - bits);
-    total += 32;
+  const maxOffset = Math.max(arr1.length, arr2.length);
+  let bestScore = 0;
+
+  for (let offset = -maxOffset; offset <= maxOffset; offset++) {
+    let matches = 0;
+    let comparisons = 0;
+
+    for (let i = 0; i < arr1.length; i++) {
+      const j = i + offset;
+      if (j >= 0 && j < arr2.length) {
+        const xor = (arr1[i] ^ arr2[j]) >>> 0;
+        const bitsSet = popcount32(xor);
+        matches += (32 - bitsSet) / 32;
+        comparisons++;
+      }
+    }
+
+    if (comparisons >= 50) { // Require at least ~6 seconds of overlap
+      const score = matches / comparisons;
+      if (score > bestScore) bestScore = score;
+    }
   }
-  return matching / total;
+
+  return bestScore;
 }
 
 // ── MAIN ──────────────────────────────────────────────────────────────────────

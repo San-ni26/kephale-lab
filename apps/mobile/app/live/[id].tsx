@@ -4,15 +4,36 @@ import { Image } from 'expo-image';
 import { useLocalSearchParams, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useCameraPermissions } from 'expo-camera';
+import { useCameraPermissions, CameraView } from 'expo-camera';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { livesAPI } from '../../src/lib/api';
 import { useAuthStore } from '../../src/stores/index';
 import { getGlobalSocket } from '../../src/lib/socket';
 
-// Vrai LiveKit depuis la librairie native
-import { LiveKitRoom, useRoomContext, VideoTrack, useTracks, useLocalParticipant } from '@livekit/react-native';
-import { Track } from 'livekit-client';
+import Constants from 'expo-constants';
+
+// Variables pour LiveKit (mockées par défaut pour Expo Go)
+let LiveKitRoom: any = ({ children }: any) => <>{children}</>;
+let useRoomContext: any = () => ({});
+let VideoTrack: any = () => null;
+let AudioTrack: any = () => null;
+let useTracks: any = () => [];
+let useLocalParticipant: any = () => ({});
+let Track: any = { Source: { Camera: 'camera' } };
+
+// Importation conditionnelle uniquement si on n'est PAS sur Expo Go
+const isExpoGo = Constants.appOwnership === 'expo';
+if (!isExpoGo) {
+  const LK = require('@livekit/react-native');
+  const LKC = require('livekit-client');
+  LiveKitRoom = LK.LiveKitRoom;
+  useRoomContext = LK.useRoomContext;
+  VideoTrack = LK.VideoTrack;
+  AudioTrack = LK.AudioTrack;
+  useTracks = LK.useTracks;
+  useLocalParticipant = LK.useLocalParticipant;
+  Track = LKC.Track;
+}
 
 const FloatingHeart = ({ x, y, onComplete }: { x: number, y: number, onComplete: () => void }) => {
   const translateY = useRef(new RNAnimated.Value(0)).current;
@@ -198,8 +219,9 @@ export default function LiveRoomScreen() {
 function LiveContent({ live, isArtist, isCamOn, isMicOn, viewerCount, setViewerCount, onToggleCam, onToggleMic, onEndLive, onDoubleTap }: any) {
   const room = useRoomContext();
   
-  // Remplacer l'ancienne CameraView par les Pistes (Tracks) LiveKit
+  // Pistes Caméra et Audio
   const cameraTracks = useTracks([Track.Source.Camera]);
+  const audioTracks = useTracks([Track.Source.Microphone]);
   // Sélectionner la première piste caméra disponible (soit la locale si artiste, soit distante si spectateur)
   const currentCamera = cameraTracks.length > 0 ? cameraTracks[0] : null;
 
@@ -323,6 +345,8 @@ function LiveContent({ live, isArtist, isCamOn, isMicOn, viewerCount, setViewerC
             </View>
           ) : !isCamOn ? (
             <Ionicons name="mic" size={100} color="#333" />
+          ) : isExpoGo && isArtist ? (
+            <CameraView style={StyleSheet.absoluteFillObject} facing="front" />
           ) : currentCamera ? (
             // Vidéo LiveKit connectée au réseau (diffusion P2P/SFU)
             <VideoTrack trackRef={currentCamera} style={StyleSheet.absoluteFillObject} objectFit="cover" />
@@ -339,6 +363,11 @@ function LiveContent({ live, isArtist, isCamOn, isMicOn, viewerCount, setViewerC
           y={heart.y} 
           onComplete={() => setHearts(prev => prev.filter(h => h.id !== heart.id))}
         />
+      ))}
+
+      {/* Rendu des pistes audio distantes (invisible) pour entendre l'hôte */}
+      {audioTracks.map((trackRef: any, index: number) => (
+        <AudioTrack key={index} trackRef={trackRef} />
       ))}
 
       {/* Header Overlay */}

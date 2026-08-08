@@ -60,35 +60,35 @@ async function downloadFromS3(s3Key, localPath) {
   await pipeline(Body, createWriteStream(localPath));
 }
 
-// ── Générer l'empreinte Chromaprint ──────────────────────────────────────────
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+
+let audiomatcher;
+try {
+  audiomatcher = require('./src/audio-fingerprint/cpp-matcher/build/Release/audiomatcher.node');
+} catch(e) {
+  console.error("Impossible de charger audiomatcher:", e);
+}
+
+// ── Générer l'empreinte C++ (Constellation) ──────────────────────────────────
 async function generateFingerprint(audioFilePath) {
-  // Essayer d'abord directement sur le fichier
-  try {
-    const { stdout } = await execFileAsync(FPCALC_PATH, [
-      '-raw', '-json', audioFilePath,
-    ], { timeout: 180000 }); // 3 minutes timeout pour morceau complet
-    const result = JSON.parse(stdout);
-    if (result.fingerprint && result.fingerprint.length > 0) {
-      return result.fingerprint;
-    }
-  } catch {}
-
-  // Fallback : extraire avec ffmpeg d'abord
-  const tmpDir = path.dirname(audioFilePath);
-  const wavPath = path.join(tmpDir, 'segment.wav');
-
+  if (!audiomatcher) throw new Error("Module C++ introuvable");
+  
+  // Extraire PCM f32le
+  const tmpPath = path.join(path.dirname(audioFilePath), `pcm-${Date.now()}.raw`);
   await execFileAsync('ffmpeg', [
     '-i', audioFilePath,
-    '-vn', '-ar', '16000', '-ac', '1',
-    '-f', 'wav', '-y', wavPath
+    '-vn', '-ac', '1', '-ar', '11025',
+    '-f', 'f32le', '-acodec', 'pcm_f32le',
+    '-y', tmpPath
   ], { timeout: 180000 });
 
-  const { stdout } = await execFileAsync(FPCALC_PATH, [
-    '-raw', '-json', wavPath
-  ], { timeout: 180000 });
+  const buffer = fs.readFileSync(tmpPath);
+  const float32Array = new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
+  fs.unlinkSync(tmpPath);
 
-  const result = JSON.parse(stdout);
-  return result.fingerprint;
+  const hashes = audiomatcher.generateHashes(float32Array);
+  return hashes.join(',');
 }
 
 // ── MAIN ──────────────────────────────────────────────────────────────────────

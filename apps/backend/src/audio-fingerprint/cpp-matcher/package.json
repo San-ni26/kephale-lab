@@ -1,0 +1,12 @@
+{
+  "name": "kephale-audio-matcher",
+  "version": "1.0.0",
+  "private": true,
+  "main": "build/Release/audiomatcher.node",
+  "dependencies": {
+    "node-addon-api": "^8.0.0"
+  },
+  "scripts": {
+    "build": "node-gyp rebuild"
+  }
+}

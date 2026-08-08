@@ -16,12 +16,27 @@ import ffmpegStatic from 'ffmpeg-static';
 import ffprobeStatic from 'ffprobe-static';
 import { pipeline } from 'stream/promises';
 
-
 const execFileAsync = promisify(execFile);
 
 // Configure FFmpeg paths
 if (ffmpegStatic) ffmpeg.setFfmpegPath(ffmpegStatic as any);
 if (ffprobeStatic?.path) ffmpeg.setFfprobePath(ffprobeStatic.path as any);
+
+// Chargement robuste du module C++ natif
+let audiomatcher: any;
+try {
+  audiomatcher = require(path.join(__dirname, 'cpp-matcher/build/Release/audiomatcher.node'));
+} catch (e1) {
+  try {
+    audiomatcher = require(path.join(__dirname, '../../../../src/audio-fingerprint/cpp-matcher/build/Release/audiomatcher.node'));
+  } catch (e2) {
+    try {
+      audiomatcher = require(path.join(process.cwd(), 'apps/backend/src/audio-fingerprint/cpp-matcher/build/Release/audiomatcher.node'));
+    } catch (e3) {
+      console.warn("⚠️ Impossible de charger le module C++ audiomatcher.node");
+    }
+  }
+}
 
 // ── Configuration ───────────────────────────────────────────────────────────────
 
@@ -233,198 +248,114 @@ export class AudioFingerprintService {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════════
-  // COUCHE 1 — Empreinte acoustique Chromaprint (locale, gratuite)
+  // COUCHE 1 — Empreinte acoustique C++ (Constellation Map Hashing)
   // ═══════════════════════════════════════════════════════════════════════════════
 
   /**
-   * Génère une empreinte acoustique Chromaprint via l'outil CLI `fpcalc`.
-   *
-   * IMPORTANT: L'option `-raw` est OBLIGATOIRE.
-   * Sans `-raw`, fpcalc retourne une chaîne base64 compressée (format propriétaire Chromaprint
-   * avec delta-encoding et bit-packing variable) qui ne se décode pas comme un simple tableau.
-   * Avec `-raw`, fpcalc retourne un tableau d'entiers 32-bit (sub-fingerprints) non-compressés
-   * ("123456,789012,..."), ce qui permet une comparaison exacte bit-à-bit via distance de Hamming.
-   *
-   * Prérequis : `fpcalc` doit être installé sur le serveur
-   *   - macOS : `brew install chromaprint`
-   *   - Linux : `apt install libchromaprint-tools`
-   *   - Docker : ajouté au Dockerfile
+   * Extrait l'audio brut en PCM (Float32) pour l'analyse C++.
+   */
+  private async extractPCM(audioFilePath: string): Promise<Float32Array> {
+    const tmpPath = path.join(os.tmpdir(), `pcm-${Date.now()}-${Math.random()}.raw`);
+    return new Promise((resolve, reject) => {
+      ffmpeg(audioFilePath)
+        .noVideo()
+        .audioChannels(1)
+        .audioFrequency(11025)
+        .audioCodec('pcm_f32le')
+        .outputFormat('f32le')
+        .output(tmpPath)
+        .on('end', () => {
+          try {
+            const buffer = fs.readFileSync(tmpPath);
+            const float32Array = new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
+            if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+            resolve(float32Array);
+          } catch(e) {
+            if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+            reject(e);
+          }
+        })
+        .on('error', (err) => {
+          if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+          reject(err);
+        })
+        .run();
+    });
+  }
+
+  /**
+   * Génère une empreinte acoustique robuste avec le module C++ natif (Shazam-style).
    */
   public async generateChromaprintFingerprint(audioFilePath: string): Promise<{
     fingerprint: string;
     duration: number;
   }> {
+    if (!audiomatcher) {
+      throw new Error("Module C++ audiomatcher non chargé. Impossible de générer l'empreinte.");
+    }
+
     try {
-      const fpcalcPath = process.env.FPCALC_PATH || 'fpcalc';
-      const args = ['-raw', '-json', audioFilePath];
+      // 1. Extraction PCM
+      const pcmData = await this.extractPCM(audioFilePath);
       
-      const { stdout } = await execFileAsync(fpcalcPath, args, { timeout: 120000 }); // Timeout de 2 minutes pour les morceaux complets
-
-      const result = JSON.parse(stdout);
-
-      if (!result.fingerprint) {
-        throw new Error('fpcalc returned empty fingerprint');
-      }
-
-      // Convertir le tableau d'entiers sub-fingerprints en chaîne séparée par des virgules
-      const fingerprintStr = Array.isArray(result.fingerprint)
-        ? result.fingerprint.join(',')
-        : String(result.fingerprint);
-
+      // 2. Génération C++
+      const hashes = audiomatcher.generateHashes(pcmData);
+      
+      // 3. Durée (11025 Hz, 1 channel)
+      const duration = pcmData.length / 11025;
+      
+      // 4. On stocke le Uint32Array sous forme de chaîne de caractères
       return {
-        fingerprint: fingerprintStr,
-        duration: result.duration || 0,
+        fingerprint: hashes.join(','),
+        duration,
       };
-    } catch (error: any) {
-      // Si fpcalc n'est pas disponible, on fait un fallback vers le hash spectral maison
-      if (error.code === 'ENOENT') {
-        console.warn('[AudioFingerprint] fpcalc not found. Using fallback spectral hash.');
-        return this.generateFallbackFingerprint(audioFilePath);
-      }
-      throw error;
+    } catch (err: any) {
+      console.error('[AudioFingerprint] Erreur génération empreinte C++:', err.message);
+      throw err;
     }
   }
 
   /**
-   * Fingerprint de fallback si fpcalc n'est pas installé.
-   * Utilise FFmpeg pour extraire les données brutes d'amplitude et en générer un hash.
-   * Moins précis que Chromaprint, mais mieux que rien.
+   * Compare deux empreintes C++ générées par le module natif.
+   * Retourne un score basé sur le nombre de pics alignés temporellement (Constellation Matching).
    */
-  private async generateFallbackFingerprint(audioFilePath: string): Promise<{
-    fingerprint: string;
-    duration: number;
-  }> {
-    const rawPath = audioFilePath + '.raw';
-
-    // Extraire les données audio brutes (PCM s16le mono 8kHz)
-    await new Promise<void>((resolve, reject) => {
-      ffmpeg(audioFilePath)
-        .noVideo()
-        .audioChannels(1)
-        .audioFrequency(8000)
-        .audioCodec('pcm_s16le')
-        .outputFormat('s16le')
-        .output(rawPath)
-        .on('end', () => resolve())
-        .on('error', reject)
-        .run();
-    });
-
-    const rawBuffer = fs.readFileSync(rawPath);
-    fs.unlinkSync(rawPath);
-
-    // Sous-échantillonner les données en blocs de 1024 samples → prendre les pics d'amplitude
-    const samples = new Int16Array(rawBuffer.buffer, rawBuffer.byteOffset, rawBuffer.length / 2);
-    const blockSize = 1024;
-    const peaks: number[] = [];
-
-    for (let i = 0; i < samples.length; i += blockSize) {
-      let maxAmp = 0;
-      for (let j = i; j < Math.min(i + blockSize, samples.length); j++) {
-        maxAmp = Math.max(maxAmp, Math.abs(samples[j]));
-      }
-      // Quantifier sur 8 niveaux
-      peaks.push(Math.floor((maxAmp / 32768) * 8));
-    }
-
-    // Générer un hash des pics d'amplitude
-    const peakString = peaks.join(',');
-    const fingerprint = crypto.createHash('sha256').update(peakString).digest('hex');
-    const duration = samples.length / 8000;
-
-    return {
-      fingerprint: `fallback_${fingerprint}`,
-      duration,
-    };
-  }
-
-  /**
-   * Compare deux empreintes Chromaprint brutes (-raw) et retourne un score de similarité (0.0 à 1.0).
-   *
-   * Pour les fingerprints Chromaprint bruts (liste d'entiers séparés par des virgules),
-   * on effectue un alignement par fenêtre glissante (sliding window) et une comparaison bit-à-bit
-   * via la distance de Hamming (popcount32).
-   *
-   * Pour les fallback hashes, on compare directement les chaînes.
-   */
-  public compareFingerprints(fp1: string, fp2: string): number {
+  public compareFingerprints(fp1: string | number[], fp2: string | number[]): number {
     if (!fp1 || !fp2) return 0;
+    
+    const arr1 = Array.isArray(fp1) ? fp1 : String(fp1).split(',').map(Number);
+    const arr2 = Array.isArray(fp2) ? fp2 : String(fp2).split(',').map(Number);
+    
+    if (arr1.length === 0 || arr2.length === 0) return 0;
 
-    // Si c'est le même fingerprint exact
-    if (fp1 === fp2) return 1.0;
-
-    // Pour les fallback hashes, comparaison exacte uniquement
-    if (fp1.startsWith('fallback_') || fp2.startsWith('fallback_')) {
-      return fp1 === fp2 ? 1.0 : 0.0;
+    // arr2 = base de données (track)
+    // Map hash -> array of times
+    const map = new Map<number, number[]>();
+    for (let i = 0; i < arr2.length; i += 2) {
+      const hash = arr2[i];
+      const t = arr2[i+1];
+      if (!map.has(hash)) map.set(hash, []);
+      map.get(hash)!.push(t);
     }
-
-    // Pour les fingerprints Chromaprint bruts :
-    // Séparer la chaîne d'entiers par virgules
-    try {
-      const arr1 = fp1.split(',').map(Number);
-      const arr2 = fp2.split(',').map(Number);
-
-      if (arr1.length === 0 || arr2.length === 0 || Number.isNaN(arr1[0]) || Number.isNaN(arr2[0])) return 0;
-
-      // Aligner par corrélation croisée (sliding window) sur TOUTE la longueur
-      const maxOffset = Math.max(arr1.length, arr2.length);
-      let bestScore = 0;
-
-      for (let offset = -maxOffset; offset <= maxOffset; offset++) {
-        let matches = 0;
-        let comparisons = 0;
-
-        for (let i = 0; i < arr1.length; i++) {
-          const j = i + offset;
-          if (j >= 0 && j < arr2.length) {
-            const xor = (arr1[i] ^ arr2[j]) >>> 0;
-            const bitsSet = this.popcount32(xor);
-            // 32 bits par sub-fingerprint. Score = (32 - hammingDist) / 32
-            matches += (32 - bitsSet) / 32;
-            comparisons++;
-          }
-        }
-
-        if (comparisons > 0) {
-          const score = matches / comparisons;
-          bestScore = Math.max(bestScore, score);
+    
+    // arr1 = vidéo (reel)
+    const offsetCounts = new Map<number, number>();
+    let maxCount = 0;
+    
+    for (let i = 0; i < arr1.length; i += 2) {
+      const hash = arr1[i];
+      const t1 = arr1[i+1];
+      const t2s = map.get(hash);
+      if (t2s) {
+        for (const t2 of t2s) {
+          const offset = t2 - t1;
+          const count = (offsetCounts.get(offset) || 0) + 1;
+          offsetCounts.set(offset, count);
+          if (count > maxCount) maxCount = count;
         }
       }
-
-      return bestScore;
-    } catch {
-      return 0;
     }
-  }
 
-  /*
-   * DEPRECATED: Ancien décodage base64 de Chromaprint (remplacé par fpcalc -raw).
-   * Conservé uniquement pour référence historique.
-   *
-  private decodeChromaprintToArray(fingerprint: string): number[] {
-    try {
-      const buf = Buffer.from(fingerprint, 'base64');
-      const arr: number[] = [];
-      for (let i = 4; i + 3 < buf.length; i += 4) {
-        arr.push(buf.readUInt32LE(i));
-      }
-      return arr;
-    } catch {
-      return [];
-    }
-  }
-  */
-
-  /**
-   * Population count (nombre de bits à 1 dans un entier 32 bits).
-   * Utilisé pour calculer la distance de Hamming entre deux sub-fingerprints.
-   */
-  private popcount32(n: number): number {
-    n = n >>> 0; // Forcer unsigned
-    n = n - ((n >>> 1) & 0x55555555);
-    n = (n & 0x33333333) + ((n >>> 2) & 0x33333333);
-    n = (n + (n >>> 4)) & 0x0f0f0f0f;
-    return (n * 0x01010101) >>> 24;
+    return maxCount;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════════
@@ -826,7 +757,7 @@ export class AudioFingerprintService {
       }
 
       // Si le meilleur score est légèrement sous le seuil, tenter un 2nd segment à +5s (en cas d'intro parlée/silence)
-      if (maxSimilarity < CHROMAPRINT_THRESHOLD) {
+      if (maxSimilarity < 5000) {
         try {
           const audioSegmentPathOffset = await this.extractAudioSegment(videoFilePath, tmpDir, 5, AUDIO_SEGMENT_DURATION);
           const videoFPOffset = await this.generateChromaprintFingerprint(audioSegmentPathOffset);
@@ -842,7 +773,7 @@ export class AudioFingerprintService {
         }
       }
 
-      if (bestMatchTrack && maxSimilarity >= CHROMAPRINT_THRESHOLD) {
+      if (bestMatchTrack && maxSimilarity >= 5000) {
         console.log(`[AudioFingerprint] Best Chromaprint match! Track "${bestMatchTrack.title}" score=${maxSimilarity}`);
 
         const result = await this.verifyRightsForTrack(userId, bestMatchTrack);

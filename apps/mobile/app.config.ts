@@ -62,7 +62,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     ],
     // '@stripe/stripe-react-native',  // Requires dev client build (EAS), not Expo Go
     '@livekit/react-native-expo-plugin',
-    '@config-plugins/react-native-webrtc',
   ],
   experiments: {
     typedRoutes: true,
