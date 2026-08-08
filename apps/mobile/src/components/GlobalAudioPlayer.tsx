@@ -2,12 +2,12 @@ import React, { useEffect, useRef } from 'react';
 import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import { usePlayerStore, useOfflineStore } from '../stores/index';
-import { tracksAPI } from '../lib/api';
+import { tracksAPI, getDynamicApiUrl } from '../lib/api';
 import Constants from 'expo-constants';
 import { rewriteUrl } from '../lib/url';
 import { hapticFeedback } from '../lib/haptics';
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl || 'http://localhost:4000';
+const API_URL = getDynamicApiUrl();
 
 export default function GlobalAudioPlayer() {
   const { currentTrack, isPlaying, setProgress, nextTrack } = usePlayerStore();

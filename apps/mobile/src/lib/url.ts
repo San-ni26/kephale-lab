@@ -38,6 +38,10 @@ export const rewriteUrl = (url: string): string => {
     
     if (isPrivateOrLocalHost(parsedUrl.hostname)) {
       parsedUrl.hostname = currentApiUrl.hostname;
+      if (currentApiUrl.port) {
+        parsedUrl.port = currentApiUrl.port;
+      }
+      parsedUrl.protocol = currentApiUrl.protocol;
       return parsedUrl.toString();
     }
   } catch (err) {
