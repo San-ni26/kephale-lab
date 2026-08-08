@@ -58,7 +58,14 @@ export class PlaylistsService {
     });
 
     if (!playlist) throw new NotFoundException({ success: false, error: 'Playlist not found' });
-    return playlist;
+    
+    return {
+      ...playlist,
+      items: (playlist.items || []).map((item: any) => ({
+        ...item,
+        track: item.track ? (({ fingerprint, s3Key, ...t }: any) => t)(item.track) : null,
+      })),
+    };
   }
 
   async renamePlaylist(userId: string, id: string, title: string) {

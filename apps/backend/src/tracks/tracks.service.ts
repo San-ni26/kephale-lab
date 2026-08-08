@@ -114,8 +114,10 @@ export class TracksService {
       }),
     ]);
 
+    const sanitizedTracks = tracks.map(({ fingerprint, s3Key, ...track }: any) => track);
+
     return {
-      data: tracks,
+      data: sanitizedTracks,
       pagination: {
         page, limit, total,
         totalPages: Math.ceil(total / limit),
@@ -153,8 +155,10 @@ export class TracksService {
       }),
     ]);
 
+    const sanitizedTracks = tracks.map(({ fingerprint, s3Key, ...track }: any) => track);
+
     return {
-      data: tracks,
+      data: sanitizedTracks,
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit), hasNext: page * limit < total, hasPrev: page > 1 },
     };
   }
@@ -180,7 +184,8 @@ export class TracksService {
           throw new NotFoundException({ success: false, error: { code: 'NOT_FOUND', message: 'Track not found' } });
         }
 
-        return track;
+        const { fingerprint, s3Key, ...sanitized } = track as any;
+        return sanitized;
       },
       120 // 2 minutes TTL
     );

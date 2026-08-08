@@ -504,8 +504,10 @@ export class ArtistsService {
       }),
     ]);
 
+    const sanitizedTracks = tracks.map(({ fingerprint, s3Key, ...track }: any) => track);
+
     return {
-      data: tracks,
+      data: sanitizedTracks,
       pagination: {
         page,
         limit,
@@ -535,7 +537,12 @@ export class ArtistsService {
       },
     });
 
-    return albums;
+    const sanitizedAlbums = albums.map((album: any) => ({
+      ...album,
+      tracks: (album.tracks || []).map(({ fingerprint, s3Key, ...track }: any) => track),
+    }));
+
+    return sanitizedAlbums;
   }
 
   async getArtistVideos(id: string, query: any) {

@@ -131,7 +131,12 @@ export class AlbumsService {
       throw new NotFoundException({ success: false, error: { code: 'NOT_FOUND', message: 'Album not found' } });
     }
 
-    return album;
+    const sanitizedAlbum = {
+      ...album,
+      tracks: (album.tracks || []).map(({ fingerprint, s3Key, ...track }: any) => track),
+    };
+
+    return sanitizedAlbum;
   }
 
   async getAlbumStatus(userId: string, id: string) {
