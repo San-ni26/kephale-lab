@@ -29,6 +29,7 @@ import { AdminModule } from './admin/admin.module';
 import { CopyrightModule } from './copyright/copyright.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { AudioFingerprintModule } from './audio-fingerprint/audio-fingerprint.module';
+import { MediaProcessingModule } from './common/media-processing.module';
 import { AdsModule } from './ads/ads.module';
 
 @Module({
@@ -94,6 +95,7 @@ import { AdsModule } from './ads/ads.module';
     CopyrightModule,
     WebhooksModule, // (We can leave this if it exists, or remove it since logic is in Payments)
     AudioFingerprintModule,
+    MediaProcessingModule, // ✅ Worker BullMQ : génère les empreintes des tracks automatiquement
     AdsModule,
   ],
   controllers: [AppController],
