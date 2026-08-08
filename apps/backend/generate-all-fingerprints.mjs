@@ -65,8 +65,8 @@ async function generateFingerprint(audioFilePath) {
   // Essayer d'abord directement sur le fichier
   try {
     const { stdout } = await execFileAsync(FPCALC_PATH, [
-      '-raw', '-length', String(AUDIO_SEGMENT_DURATION + 10), '-json', audioFilePath,
-    ], { timeout: 60000 });
+      '-raw', '-json', audioFilePath,
+    ], { timeout: 180000 }); // 3 minutes timeout pour morceau complet
     const result = JSON.parse(stdout);
     if (result.fingerprint && result.fingerprint.length > 0) {
       return result.fingerprint;
@@ -80,22 +80,12 @@ async function generateFingerprint(audioFilePath) {
   await execFileAsync('ffmpeg', [
     '-i', audioFilePath,
     '-vn', '-ar', '16000', '-ac', '1',
-    '-ss', '10',         // Commencer à 10s (éviter les intros silencieuses)
-    '-t', String(AUDIO_SEGMENT_DURATION),
     '-f', 'wav', '-y', wavPath
-  ], { timeout: 120000 }).catch(async () => {
-    // Si seek échoue, essayer depuis le début
-    await execFileAsync('ffmpeg', [
-      '-i', audioFilePath,
-      '-vn', '-ar', '16000', '-ac', '1',
-      '-t', String(AUDIO_SEGMENT_DURATION),
-      '-f', 'wav', '-y', wavPath
-    ], { timeout: 120000 });
-  });
+  ], { timeout: 180000 });
 
   const { stdout } = await execFileAsync(FPCALC_PATH, [
     '-raw', '-json', wavPath
-  ], { timeout: 30000 });
+  ], { timeout: 180000 });
 
   const result = JSON.parse(stdout);
   return result.fingerprint;
@@ -121,7 +111,6 @@ async function main() {
       FROM tracks t
       JOIN "artist_profiles" a ON t."artistId" = a.id
       WHERE t.status = 'ACTIVE'
-        AND (t.fingerprint IS NULL OR length(t.fingerprint::text) < 10)
         AND (t."s3Key" IS NOT NULL OR t."audioUrl" IS NOT NULL)
       ORDER BY t."createdAt" DESC
     `);

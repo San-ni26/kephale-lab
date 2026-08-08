@@ -211,7 +211,6 @@ model Track {
   @@index([artistId])
   @@index([status])
   @@index([createdAt])
-  @@index([fingerprint])
   @@map("tracks")
 }
 

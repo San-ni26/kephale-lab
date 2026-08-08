@@ -256,12 +256,9 @@ export class AudioFingerprintService {
   }> {
     try {
       const fpcalcPath = process.env.FPCALC_PATH || 'fpcalc';
-      const { stdout } = await execFileAsync(fpcalcPath, [
-        '-raw',
-        '-json',
-        '-length', String(AUDIO_SEGMENT_DURATION),
-        audioFilePath,
-      ], { timeout: 30000 });
+      const args = ['-raw', '-json', audioFilePath];
+      
+      const { stdout } = await execFileAsync(fpcalcPath, args, { timeout: 120000 }); // Timeout de 2 minutes pour les morceaux complets
 
       const result = JSON.parse(stdout);
 
@@ -369,8 +366,8 @@ export class AudioFingerprintService {
 
       if (arr1.length === 0 || arr2.length === 0 || Number.isNaN(arr1[0]) || Number.isNaN(arr2[0])) return 0;
 
-      // Aligner par corrélation croisée (sliding window)
-      const maxOffset = Math.min(100, Math.max(arr1.length, arr2.length));
+      // Aligner par corrélation croisée (sliding window) sur TOUTE la longueur
+      const maxOffset = Math.max(arr1.length, arr2.length);
       let bestScore = 0;
 
       for (let offset = -maxOffset; offset <= maxOffset; offset++) {
@@ -1230,11 +1227,8 @@ export class AudioFingerprintService {
       // Télécharger le fichier audio original depuis S3
       const audioFilePath = await this.downloadFromS3(track.s3Key, tmpDir);
 
-      // Extraire un segment audio (pour le fingerprint)
-      const segmentPath = await this.extractAudioSegment(audioFilePath, tmpDir, 10, AUDIO_SEGMENT_DURATION);
-
-      // Générer le fingerprint Chromaprint
-      const { fingerprint } = await this.generateChromaprintFingerprint(segmentPath);
+      // Générer l'empreinte Chromaprint sur L'INTÉGRALITÉ du fichier original
+      const { fingerprint } = await this.generateChromaprintFingerprint(audioFilePath);
 
       // Sauvegarder en DB
       await this.prisma.track.update({
