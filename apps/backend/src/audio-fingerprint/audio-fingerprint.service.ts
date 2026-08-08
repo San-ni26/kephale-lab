@@ -783,8 +783,9 @@ export class AudioFingerprintService {
       rightsStatus: 'ORIGINAL_SOUND',
       tokensRequired: 0,
       detectionMethod: s3Key ? 'CHROMAPRINT' : 'METADATA',
+      // ✅ CORRECTION BUG 2 : Message honnête — ne pas dire "vérifiée 100%" si aucun match n'a été trouvé
       message: s3Key
-        ? 'Son original validé (empreinte acoustique vérifiée 100%)'
+        ? 'Aucune musique protégée détectée — son original autorisé'
         : 'Son original ou non répertorié autorisé',
     };
   }

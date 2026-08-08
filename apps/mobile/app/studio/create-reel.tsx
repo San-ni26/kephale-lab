@@ -325,12 +325,14 @@ export default function CreateReelStudioScreen() {
             setRightsInfo(res.data.data);
           }
         } catch {
+          // ⚠️ CORRECTION BUG 1 : Ne jamais autoriser automatiquement un track connu si la vérif échoue.
+          // Si le serveur est indisponible, bloquer la publication par sécurité.
           if (isMounted) {
             setRightsInfo({
-              isAuthorized: true,
-              rightsStatus: 'ORIGINAL_SOUND',
+              isAuthorized: false,
+              rightsStatus: 'REQUIRES_PURCHASE',
               tokensRequired: 0,
-              message: 'Vérification impossible — le serveur vérifiera après publication.',
+              message: 'Vérification des droits impossible (serveur indisponible). Reconnectez-vous ou réessayez avant de publier.',
             });
           }
         } finally {
@@ -1399,12 +1401,17 @@ export default function CreateReelStudioScreen() {
             <View style={styles.audioSafetyCard}>
               <View style={styles.safetyCardHeader}>
                 <View style={styles.safetyHeaderLeft}>
-                  <Ionicons name="shield-checkmark" size={16} color="#FF5A00" />
+                  <Ionicons name="shield-checkmark" size={16} color={isUploadingPreVideo ? '#F59E0B' : '#FF5A00'} />
                   <Text style={styles.safetyHeaderTitle} numberOfLines={1}>Sécurité Audio & Droits d'auteur</Text>
                 </View>
 
                 <View style={styles.detectionMethodBadge}>
-                  {isVerifyingRights ? (
+                  {isUploadingPreVideo ? (
+                    <View style={styles.scanningBadgeRow}>
+                      <ActivityIndicator size="small" color="#F59E0B" />
+                      <Text style={[styles.scanningBadgeText, { color: '#F59E0B' }]}>Upload {preUploadProgress}%</Text>
+                    </View>
+                  ) : isVerifyingRights ? (
                     <View style={styles.scanningBadgeRow}>
                       <ActivityIndicator size="small" color="#FF5A00" />
                       <Text style={styles.scanningBadgeText}>Vérification...</Text>
@@ -1420,22 +1427,45 @@ export default function CreateReelStudioScreen() {
               </View>
 
               <View style={styles.rightsResultBox}>
-                <View style={styles.statusTitleRow}>
-                  <Ionicons
-                    name={rightsInfo.isAuthorized ? 'checkmark-circle-sharp' : 'alert-circle-sharp'}
-                    size={20}
-                    color={rightsInfo.isAuthorized ? '#10B981' : '#EF4444'}
-                  />
-                  <Text style={[styles.statusTitleText, { color: rightsInfo.isAuthorized ? '#10B981' : '#F87171' }]}>
-                    {rightsInfo.isAuthorized
-                      ? (selectedTrack ? 'Morceau Autorisé (Catalogue Kephale)' : 'Son Original Autorisé')
-                      : 'Droits d\'Auteur Requis'}
-                  </Text>
-                </View>
+                {/* État : pré-upload en cours (analyse acoustique pas encore lancée) */}
+                {isUploadingPreVideo ? (
+                  <View style={styles.statusTitleRow}>
+                    <Ionicons name="hourglass-outline" size={20} color="#F59E0B" />
+                    <Text style={[styles.statusTitleText, { color: '#F59E0B' }]}>
+                      Analyse acoustique en cours...
+                    </Text>
+                  </View>
+                ) : isVerifyingRights ? (
+                  <View style={styles.statusTitleRow}>
+                    <Ionicons name="scan-outline" size={20} color="#FF5A00" />
+                    <Text style={[styles.statusTitleText, { color: '#FF5A00' }]}>
+                      Vérification des droits en cours...
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.statusTitleRow}>
+                    <Ionicons
+                      name={rightsInfo.isAuthorized ? 'checkmark-circle-sharp' : 'alert-circle-sharp'}
+                      size={20}
+                      color={rightsInfo.isAuthorized ? '#10B981' : '#EF4444'}
+                    />
+                    <Text style={[styles.statusTitleText, { color: rightsInfo.isAuthorized ? '#10B981' : '#F87171' }]}>
+                      {rightsInfo.isAuthorized
+                        ? (selectedTrack ? 'Morceau Autorisé (Catalogue Kephale)' : 'Son Original Autorisé')
+                        : 'Droits d\'Auteur Requis'}
+                    </Text>
+                  </View>
+                )}
 
-                <Text style={styles.statusDescriptionText}>{rightsInfo.message}</Text>
+                <Text style={styles.statusDescriptionText}>
+                  {isUploadingPreVideo
+                    ? `Téléchargement de la vidéo pour l'analyse (${preUploadProgress}%). L'empreinte acoustique sera vérifiée automatiquement.`
+                    : isVerifyingRights
+                    ? 'Comparaison avec le catalogue de musiques protégées en cours...'
+                    : rightsInfo.message}
+                </Text>
 
-                {rightsInfo.matchedTrack && !rightsInfo.isAuthorized && (
+                {rightsInfo.matchedTrack && !rightsInfo.isAuthorized && !isVerifyingRights && !isUploadingPreVideo && (
                   <View style={styles.matchedTrackCard}>
                     <View style={styles.matchedTrackIconWrap}>
                       <Ionicons name="musical-notes" size={20} color="#FF5A00" />
@@ -1462,6 +1492,7 @@ export default function CreateReelStudioScreen() {
                 )}
               </View>
             </View>
+
           </View>
         )}
 
@@ -1529,12 +1560,50 @@ export default function CreateReelStudioScreen() {
       <View style={styles.footerNav}>
         {step < 3 ? (
           <TouchableOpacity
-            style={[styles.actionBtn, !videoFile && styles.actionBtnDisabled]}
-            onPress={() => setStep((s) => (s + 1) as any)}
+            style={[
+              styles.actionBtn,
+              // ⚠️ CORRECTION BUG 3 : Bloquer la navigation si analyse ou upload en cours, ou si droits non autorisés
+              (!videoFile || (step === 2 && (isUploadingPreVideo || isVerifyingRights)) || (step === 2 && !rightsInfo.isAuthorized)) && styles.actionBtnDisabled,
+            ]}
+            onPress={() => {
+              // Bloquer si vérification en cours
+              if (step === 2 && (isUploadingPreVideo || isVerifyingRights)) {
+                Alert.alert(
+                  'Analyse en cours',
+                  'L\'analyse du son de votre vidéo est en cours. Veuillez patienter avant de continuer.',
+                  [{ text: 'OK' }]
+                );
+                return;
+              }
+              // Bloquer si droits non autorisés à l'étape 2
+              if (step === 2 && !rightsInfo.isAuthorized) {
+                Alert.alert(
+                  'Droits d\'auteur requis',
+                  rightsInfo.message || 'Vous devez acheter ce son ou en choisir un autorisé avant de continuer.',
+                  [
+                    { text: 'Choisir un autre son', onPress: () => setIsAudioModalVisible(true) },
+                    { text: 'Annuler', style: 'cancel' },
+                  ]
+                );
+                return;
+              }
+              setStep((s) => (s + 1) as any);
+            }}
             disabled={!videoFile}
           >
-            <Text style={styles.actionBtnText}>Continuer le montage</Text>
-            <Ionicons name="arrow-forward" size={18} color="#FFF" />
+            {step === 2 && (isUploadingPreVideo || isVerifyingRights) ? (
+              <>
+                <ActivityIndicator size="small" color="#FFF" style={{ marginRight: 8 }} />
+                <Text style={styles.actionBtnText}>
+                  {isUploadingPreVideo ? `Analyse en cours... ${preUploadProgress}%` : 'Vérification droits...'}
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.actionBtnText}>Continuer le montage</Text>
+                <Ionicons name="arrow-forward" size={18} color="#FFF" />
+              </>
+            )}
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
