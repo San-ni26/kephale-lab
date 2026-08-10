@@ -18,7 +18,7 @@ const getUserAPI = () => {
 // SÉCURITÉ :
 // - accessToken + refreshToken → expo-secure-store (Keychain iOS / Keystore Android)
 // - user profile (non-sensible) → MMKV (accès synchrone rapide)
-// Les deux stores sont synchronisés via setAuth/logout.
+import { saveAccessToken, saveRefreshToken, clearSecureTokens } from '../lib/secureStorage';
 
 interface AuthState {
   user: User | null;
@@ -33,18 +33,21 @@ interface AuthState {
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       user: null,
       accessToken: null,
       refreshToken: null,
       isAuthenticated: false,
-      setAuth: (user, tokens) =>
+      setAuth: (user, tokens) => {
+        saveAccessToken(tokens.accessToken).catch(() => {});
+        saveRefreshToken(tokens.refreshToken).catch(() => {});
         set({
           user,
           accessToken: tokens.accessToken,
           refreshToken: tokens.refreshToken,
           isAuthenticated: true,
-        }),
+        });
+      },
       updateUser: (updates) =>
         set((state) => ({
           user: state.user ? { ...state.user, ...updates } : null,
@@ -56,28 +59,23 @@ export const useAuthStore = create<AuthState>()(
           if (res.data?.success && res.data?.data) {
             set((state) => ({
               user: { ...state.user, ...res.data.data },
+              isAuthenticated: true,
             }));
           }
-        } catch (e) {
-          // Silently ignore auth check errors (user may not be connected)
+        } catch (e: any) {
+          if (e?.response?.status === 401) {
+            get().logout();
+          }
         }
       },
-      logout: () =>
-        set({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false }),
+      logout: () => {
+        clearSecureTokens().catch(() => {});
+        set({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false });
+      },
     }),
     {
-      name: 'kephale-auth-secure',
-      // SÉCURITÉ : Tokens JWT dans expo-secure-store (Keychain/Keystore)
-      storage: createJSONStorage(() => secureTokenStorage),
-      // Ne persister QUE les tokens et le statut auth dans le stockage sécurisé
-      // L'objet user complet est reconstruit via checkAuth() au démarrage
-      partialize: (state) => ({
-        accessToken: state.accessToken,
-        refreshToken: state.refreshToken,
-        isAuthenticated: state.isAuthenticated,
-        // On garde user en mémoire pour la session active mais on le revalide via /users/me
-        user: state.user,
-      }),
+      name: 'kephale-auth-storage',
+      storage: createJSONStorage(() => authPersistStorage),
     }
   )
 );

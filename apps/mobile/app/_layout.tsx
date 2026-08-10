@@ -26,24 +26,38 @@ const queryClient = new QueryClient({
 
 export default function RootLayout() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const accessToken = useAuthStore((state) => state.accessToken);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    const unsub = useAuthStore.persist.onFinishHydration(() => setHydrated(true));
-    setHydrated(useAuthStore.persist.hasHydrated());
+    const unsub = useAuthStore.persist.onFinishHydration(() => {
+      setHydrated(true);
+      const { isAuthenticated, checkAuth } = useAuthStore.getState();
+      if (isAuthenticated) {
+        checkAuth().catch(() => {});
+      }
+    });
+    const hasHydrated = useAuthStore.persist.hasHydrated();
+    setHydrated(hasHydrated);
+    if (hasHydrated) {
+      const { isAuthenticated, checkAuth } = useAuthStore.getState();
+      if (isAuthenticated) {
+        checkAuth().catch(() => {});
+      }
+    }
     return () => {
       unsub();
     };
   }, []);
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && accessToken) {
       initGlobalSocket();
     } else {
       disconnectGlobalSocket();
     }
     return () => disconnectGlobalSocket();
-  }, [isAuthenticated]);
+  }, [isAuthenticated, accessToken]);
 
   // SÉCURITÉ : Nettoyage automatique des téléchargements expirés (> 30 jours)
   useEffect(() => {

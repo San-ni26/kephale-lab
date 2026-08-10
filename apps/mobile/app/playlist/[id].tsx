@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Ionicons, Feather } from '@expo/vector-icons';
@@ -6,11 +6,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { playlistsAPI } from '../../src/lib/api';
 import { usePlayerStore } from '../../src/stores';
+import TextInputModal from '../../src/components/TextInputModal';
 
 export default function PlaylistScreen() {
   const { id } = useLocalSearchParams();
   const queryClient = useQueryClient();
   const { setTrack, currentTrack } = usePlayerStore();
+  const [showRenameModal, setShowRenameModal] = useState(false);
 
   const { data: playlist, isLoading, isError } = useQuery({
     queryKey: ['playlist', id],
@@ -33,6 +35,7 @@ export default function PlaylistScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['playlist', id] });
       queryClient.invalidateQueries({ queryKey: ['playlists'] });
+      setShowRenameModal(false);
     },
   });
 
@@ -44,11 +47,7 @@ export default function PlaylistScreen() {
   });
 
   const handleRename = () => {
-    Alert.prompt('Renommer', 'Nouveau nom de la playlist', (text) => {
-      if (text && text !== playlist?.title) {
-        renameMutation.mutate(text);
-      }
-    }, 'plain-text', playlist?.title);
+    setShowRenameModal(true);
   };
 
   const handleDelete = () => {
@@ -159,6 +158,22 @@ export default function PlaylistScreen() {
           )}
         </View>
       </ScrollView>
+
+      <TextInputModal
+        visible={showRenameModal}
+        title="Renommer la Playlist"
+        initialValue={playlist?.title || ''}
+        placeholder="Nouveau nom"
+        confirmText="Renommer"
+        onConfirm={(text) => {
+          if (text && text !== playlist?.title) {
+            renameMutation.mutate(text);
+          } else {
+            setShowRenameModal(false);
+          }
+        }}
+        onCancel={() => setShowRenameModal(false)}
+      />
     </LinearGradient>
   );
 }

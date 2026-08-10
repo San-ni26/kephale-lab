@@ -6,12 +6,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { userAPI } from '../src/lib/api';
-import { useAuthStore } from '../src/stores';
+import { useAuthStore, usePlayerStore } from '../src/stores';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 
 export default function PurchasesScreen() {
   const { user } = useAuthStore();
+  const { setTrack } = usePlayerStore();
 
   const { data: purchasesData, isLoading } = useQuery({
     queryKey: ['my-purchases'],
@@ -29,8 +30,8 @@ export default function PurchasesScreen() {
   });
 
   const handlePress = (purchase: any) => {
-    if (purchase.type === 'TRACK' && purchase.trackId) {
-      router.push(`/album/${purchase.track.albumId}` as any); // fallback if track has no direct route
+    if (purchase.type === 'TRACK' && purchase.track) {
+      setTrack(purchase.track, [purchase.track]);
     } else if (purchase.type === 'ALBUM' && purchase.albumId) {
       router.push(`/album/${purchase.albumId}`);
     } else if (purchase.type === 'CLIP' && purchase.videoId) {
@@ -47,7 +48,7 @@ export default function PurchasesScreen() {
     if (purchase.type === 'TRACK' && purchase.track) {
       title = purchase.track.title;
       subtitle = purchase.track.artist?.stageName || '';
-      image = purchase.track.album?.coverUrl;
+      image = purchase.track.coverUrl || purchase.track.album?.coverUrl;
       icon = 'musical-note';
     } else if (purchase.type === 'ALBUM' && purchase.album) {
       title = purchase.album.title;

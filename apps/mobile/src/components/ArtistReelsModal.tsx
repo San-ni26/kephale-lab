@@ -125,16 +125,16 @@ function SimpleReelItem({
 
   return (
     <View style={styles.reelContainer}>
+      {/* Poster image always present under video to avoid any black frame or background loader */}
+      <VideoThumbnail
+        sourceUrl={item.thumbnailUrl}
+        videoUrl={item.videoUrl}
+        style={StyleSheet.absoluteFill}
+        resizeMode="cover"
+      />
       {/* Mount video player for active and adjacent reels for instant playback */}
-      {(isActive || isNearActive) && !!item.videoUrl ? (
+      {(isActive || isNearActive) && !!item.videoUrl && (
         <ActiveReelPlayer videoUrl={item.videoUrl} isActive={isActive} />
-      ) : (
-        <VideoThumbnail
-          sourceUrl={item.thumbnailUrl}
-          videoUrl={item.videoUrl}
-          style={StyleSheet.absoluteFill}
-          resizeMode="cover"
-        />
       )}
       <View style={styles.gradient} pointerEvents="none" />
       

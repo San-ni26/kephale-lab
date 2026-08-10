@@ -289,19 +289,24 @@ export class ChatService {
       await this.prisma.conversation.delete({ where: { id: conversationId } });
     }
 
-    await this.redis.hdel(`chat:unread:${userId}`, conversationId);
-    this.publishUserUpdate(userId, { type: 'CHAT_UNREAD_UPDATE' });
+    try {
+      await this.redis.hdel(`chat:unread:${userId}`, conversationId);
+      this.publishUserUpdate(userId, { type: 'CHAT_UNREAD_UPDATE' });
+    } catch {}
 
     return null;
   }
 
   async getUnreadCount(userId: string) {
-    const counts = await this.redis.hvals(`chat:unread:${userId}`);
-    let totalUnread = 0;
-    for (const countStr of counts) {
-      totalUnread += parseInt(countStr, 10) || 0;
+    try {
+      const counts = await this.redis.hvals(`chat:unread:${userId}`);
+      let totalUnread = 0;
+      for (const countStr of counts) {
+        totalUnread += parseInt(countStr, 10) || 0;
+      }
+      return { unreadCount: totalUnread };
+    } catch {
+      return { unreadCount: 0 };
     }
-    
-    return { unreadCount: totalUnread };
   }
 }

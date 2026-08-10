@@ -44,6 +44,7 @@ export function VideoThumbnail({
   useEffect(() => {
     let isMounted = true;
 
+    // Extraire la 1ère image (0s) si pas de miniature URL fournie
     if (!sourceUrl && videoUrl && !generatedUri && !error) {
       if (thumbnailMemoryCache.has(videoUrl)) {
         setGeneratedUri(thumbnailMemoryCache.get(videoUrl)!);
@@ -54,14 +55,14 @@ export function VideoThumbnail({
 
       const runExtraction = async () => {
         try {
-          // Timeout after 6s to never hang
+          // Extraction légère de la frame 0 (qualité 0.4 pour économiser la RAM et le cache)
           const extractionPromise = VideoThumbnails.getThumbnailAsync(videoUrl, {
             time: 0,
-            quality: 0.5,
+            quality: 0.4,
           });
 
           const timeoutPromise = new Promise<{ uri: string }>((_, reject) =>
-            setTimeout(() => reject(new Error('Thumbnail timeout')), 6000)
+            setTimeout(() => reject(new Error('Thumbnail timeout')), 7000)
           );
 
           const { uri } = await Promise.race([extractionPromise, timeoutPromise]);

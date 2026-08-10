@@ -45,7 +45,7 @@ export default function OnboardingScreen() {
               description="Regardez les clips exclusifs"
             />
             <FeatureItem
-              icon="film"
+              icon="video"
               title="Vidéos"
               description="Découvrez des vidéos au format TikTok"
             />

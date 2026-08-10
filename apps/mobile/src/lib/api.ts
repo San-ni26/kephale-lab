@@ -29,8 +29,10 @@ const getAuthStore = () => {
 
 export const api = axios.create({
   baseURL: `${API_URL}/api/v1`,
-  timeout: 30000,
-  headers: { 'Content-Type': 'application/json' },
+  timeout: 120000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
 });
 
 let anonymousSessionId = '';
@@ -50,9 +52,13 @@ api.interceptors.request.use(
       if (token) config.headers.Authorization = `Bearer ${token}`;
     } catch { }
     config.headers['X-Session-ID'] = getAnonymousSessionId();
+    console.log(`[AXIOS] Sending request to: ${config.url}`);
     return config;
   },
-  (error) => Promise.reject(error)
+  (error) => {
+    console.error(`[AXIOS] Request error:`, error);
+    return Promise.reject(error);
+  }
 );
 
 // ── Response Interceptor (auto refresh token) ─────────────────────────────────
@@ -67,19 +73,34 @@ function processQueue(error: unknown, token: string | null = null) {
 
 api.interceptors.response.use(
   (response) => {
+    console.log(`[AXIOS] Received response from: ${response.config.url} (status: ${response.status})`);
     if (response.data) {
-      response.data = rewriteUrlsInObject(response.data);
+      const originalData = rewriteUrlsInObject(response.data);
+      
+      if (typeof originalData === 'object' && originalData !== null && !('success' in originalData) && !('data' in originalData)) {
+        response.data = new Proxy(originalData, {
+          get(target, prop) {
+            if (prop === 'success') return true;
+            if (prop === 'data') return target;
+            return Reflect.get(target, prop);
+          }
+        });
+      } else {
+        response.data = originalData;
+      }
     }
     return response;
   },
   async (error) => {
     const originalRequest = error.config;
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failedQueue.push({
             resolve: (token) => {
+              originalRequest._retry = true;
+              originalRequest.headers = originalRequest.headers || {};
               originalRequest.headers.Authorization = `Bearer ${token}`;
               resolve(api(originalRequest));
             },
@@ -105,6 +126,7 @@ api.interceptors.response.use(
         getAuthStore().setState({ accessToken, refreshToken: newRefreshToken });
 
         processQueue(null, accessToken);
+        originalRequest.headers = originalRequest.headers || {};
         originalRequest.headers.Authorization = `Bearer ${accessToken}`;
         return api(originalRequest);
       } catch (refreshError) {
@@ -116,6 +138,9 @@ api.interceptors.response.use(
       }
     }
 
+    if (error.response?.status !== 401 && error.response?.status !== 403) {
+      console.error(`[AXIOS] Response error for ${error.config?.url}:`, error.message);
+    }
     return Promise.reject(error);
   }
 );
@@ -133,6 +158,10 @@ export const authAPI = {
     api.post('/auth/refresh', { refreshToken }),
   logout: (refreshToken: string) =>
     api.post('/auth/logout', { refreshToken }),
+  forgotPassword: (email: string) =>
+    api.post('/auth/forgot-password', { email }),
+  resetPassword: (data: { token: string; password: string }) =>
+    api.post('/auth/reset-password', data),
 };
 
 export const tracksAPI = {
@@ -210,7 +239,9 @@ export const artistsAPI = {
     api.get('/artists/me/sales'),
   getWithdrawals: () =>
     api.get('/artists/me/withdrawals'),
-  requestWithdrawal: (data: { amount: number; paymentMethod: string; paymentDetails: string }) =>
+  requestWithdrawalOtp: () =>
+    api.post('/artists/me/withdrawals/request-otp'),
+  requestWithdrawal: (data: { amount: number; paymentMethod: string; paymentDetails: string; otp?: string }) =>
     api.post('/artists/me/withdrawals', data),
   cancelWithdrawal: (id: string) =>
     api.delete(`/artists/me/withdrawals/${id}`),

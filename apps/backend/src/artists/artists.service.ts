@@ -431,9 +431,27 @@ export class ArtistsService {
     };
   }
 
+  async resolveArtistId(id: string): Promise<string> {
+    if (!id) return id;
+    const cacheKey = `artist:resolve:${id}`;
+    try {
+      const cached = await this.redis.get(cacheKey);
+      if (cached) return cached;
+    } catch {}
+    const artist = await this.prisma.artistProfile.findFirst({
+      where: { OR: [{ id }, { userId: id }] },
+      select: { id: true },
+    });
+    const resolvedId = artist ? artist.id : id;
+    try { await this.redis.setex(cacheKey, 300, resolvedId); } catch {}
+    return resolvedId;
+  }
+
   async getArtistById(id: string) {
-    const artist = await this.prisma.artistProfile.findUnique({
-      where: { id },
+    const artist = await this.prisma.artistProfile.findFirst({
+      where: {
+        OR: [{ id }, { userId: id }],
+      },
       include: {
         _count: { select: { followers: true, tracks: true, videos: true, albums: true } },
       },
@@ -447,32 +465,55 @@ export class ArtistsService {
   }
 
   async getArtistStats(id: string) {
-    const artist = await this.prisma.artistProfile.findUnique({ where: { id } });
-    if (!artist) {
-      throw new NotFoundException({ success: false, error: { code: 'NOT_FOUND', message: 'Artist not found' } });
-    }
+    const realArtistId = await this.resolveArtistId(id);
+    const cacheKey = `artist:stats:${realArtistId}`;
 
-    const [followersCount, tracksCount, videosCount, albumsCount, playsAgg, viewsAgg] = await Promise.all([
-      this.prisma.follow.count({ where: { artistId: id } }),
-      this.prisma.track.count({ where: { artistId: id, status: 'ACTIVE' } }),
-      this.prisma.video.count({ where: { artistId: id, status: 'ACTIVE' } }),
-      this.prisma.album.count({ where: { artistId: id, status: 'ACTIVE' } }),
-      this.prisma.track.aggregate({ where: { artistId: id, status: 'ACTIVE' }, _sum: { plays: true } }),
-      this.prisma.video.aggregate({ where: { artistId: id, status: 'ACTIVE' }, _sum: { views: true } }),
-    ]);
+    const fetchFn = async () => {
+      const artist = await this.prisma.artistProfile.findUnique({ where: { id: realArtistId } });
+      if (!artist) {
+        throw new NotFoundException({ success: false, error: { code: 'NOT_FOUND', message: 'Artist not found' } });
+      }
 
-    return {
-      followersCount,
-      tracksCount,
-      videosCount,
-      albumsCount,
-      totalPlays: playsAgg._sum.plays ?? 0,
-      totalViews: viewsAgg._sum.views ?? 0,
+      const [followersCount, tracksCount, videosCount, albumsCount, playsAgg, viewsAgg] = await Promise.all([
+        this.prisma.follow.count({ where: { artistId: realArtistId } }),
+        this.prisma.track.count({ where: { artistId: realArtistId, status: 'ACTIVE' } }),
+        this.prisma.video.count({ where: { artistId: realArtistId, status: 'ACTIVE' } }),
+        this.prisma.album.count({ where: { artistId: realArtistId, status: 'ACTIVE' } }),
+        this.prisma.track.aggregate({ where: { artistId: realArtistId, status: 'ACTIVE' }, _sum: { plays: true } }),
+        this.prisma.video.aggregate({ where: { artistId: realArtistId, status: 'ACTIVE' }, _sum: { views: true } }),
+      ]);
+
+      return {
+        followersCount,
+        tracksCount,
+        videosCount,
+        albumsCount,
+        totalPlays: playsAgg._sum.plays ?? 0,
+        totalViews: viewsAgg._sum.views ?? 0,
+      };
     };
+
+    try {
+      const cached = await this.redis.get(cacheKey);
+      if (cached) return JSON.parse(cached);
+    } catch {}
+
+    const result = await fetchFn();
+
+    try { await this.redis.setex(cacheKey, 120, JSON.stringify(result)); } catch {}
+    return result;
   }
 
   async getArtistTracks(id: string, query: any) {
+    const realArtistId = await this.resolveArtistId(id);
     const { page = 1, limit = 20, sort = 'newest', isSingle } = query;
+    const cacheKey = `artist:tracks:${realArtistId}:${JSON.stringify({ page, limit, sort, isSingle })}`;
+
+    try {
+      const cached = await this.redis.get(cacheKey);
+      if (cached) return JSON.parse(cached);
+    } catch {}
+
     const skip = (page - 1) * limit;
 
     const orderBy: any =
@@ -480,7 +521,7 @@ export class ArtistsService {
       : sort === 'price_asc' ? { price: 'asc' }
       : { createdAt: 'desc' };
 
-    const where: any = { artistId: id, status: { not: 'INACTIVE' } };
+    const where: any = { artistId: realArtistId, status: { not: 'INACTIVE' } };
     if (isSingle === true) {
       where.albumId = null;
     } else if (isSingle === false) {
@@ -494,7 +535,24 @@ export class ArtistsService {
         orderBy,
         skip,
         take: limit,
-        include: {
+        select: {
+          id: true,
+          title: true,
+          duration: true,
+          coverUrl: true,
+          audioUrl: true,
+          price: true,
+          currency: true,
+          genre: true,
+          bpm: true,
+          key: true,
+          plays: true,
+          isExplicit: true,
+          releaseDate: true,
+          createdAt: true,
+          artistId: true,
+          albumId: true,
+          status: true,
           artist: {
             select: { id: true, stageName: true, avatar: true, isVerified: true },
           },
@@ -504,10 +562,8 @@ export class ArtistsService {
       }),
     ]);
 
-    const sanitizedTracks = tracks.map(({ fingerprint, s3Key, ...track }: any) => track);
-
-    return {
-      data: sanitizedTracks,
+    const result = {
+      data: tracks,
       pagination: {
         page,
         limit,
@@ -517,39 +573,35 @@ export class ArtistsService {
         hasPrev: page > 1,
       },
     };
+
+    try {
+      await this.redis.setex(cacheKey, 60, JSON.stringify(result));
+    } catch {}
+
+    return result;
   }
 
   async getArtistAlbums(id: string) {
+    const realArtistId = await this.resolveArtistId(id);
+    // Optimized: ne charge PAS tous les tracks inline (évite les joins lourds)
+    // Le frontend charge les tracks séparément via /artists/:id/tracks ou /albums/:id
     const albums = await this.prisma.album.findMany({
-      where: { artistId: id, status: 'ACTIVE' },
+      where: { artistId: realArtistId, status: 'ACTIVE' },
       orderBy: { releaseDate: 'desc' },
       include: {
         artist: { select: { id: true, stageName: true, avatar: true, coverImage: true, isVerified: true } },
-        tracks: {
-          where: { status: { not: 'INACTIVE' } },
-          orderBy: { createdAt: 'asc' },
-          include: {
-            artist: { select: { id: true, stageName: true, avatar: true, isVerified: true } },
-            _count: { select: { likes: true, purchases: true } },
-          },
-        },
         _count: { select: { tracks: true, purchases: true } },
       },
     });
-
-    const sanitizedAlbums = albums.map((album: any) => ({
-      ...album,
-      tracks: (album.tracks || []).map(({ fingerprint, s3Key, ...track }: any) => track),
-    }));
-
-    return sanitizedAlbums;
+    return albums;
   }
 
   async getArtistVideos(id: string, query: any) {
+    const realArtistId = await this.resolveArtistId(id);
     const { page = 1, limit = 20, type } = query;
     const skip = (page - 1) * limit;
 
-    const where: any = { artistId: id, status: 'ACTIVE' };
+    const where: any = { artistId: realArtistId, status: 'ACTIVE' };
     if (type) where.type = type;
 
     const [total, videos] = await Promise.all([
@@ -577,21 +629,22 @@ export class ArtistsService {
   }
 
   async followArtist(userId: string, artistId: string) {
-    const artist = await this.prisma.artistProfile.findUnique({ where: { id: artistId } });
+    const realArtistId = await this.resolveArtistId(artistId);
+    const artist = await this.prisma.artistProfile.findUnique({ where: { id: realArtistId } });
     if (!artist) {
       throw new NotFoundException({ success: false, error: { code: 'NOT_FOUND', message: 'Artist not found' } });
     }
 
     try {
       await this.prisma.$transaction([
-        this.prisma.follow.create({ data: { userId, artistId } }),
+        this.prisma.follow.create({ data: { userId, artistId: realArtistId } }),
         this.prisma.artistProfile.update({
-          where: { id: artistId },
+          where: { id: realArtistId },
           data: { totalFollowers: { increment: 1 } },
         }),
         this.prisma.userArtistAffinity.upsert({
-          where: { userId_artistId: { userId, artistId } },
-          create: { userId, artistId, score: 10 },
+          where: { userId_artistId: { userId, artistId: realArtistId } },
+          create: { userId, artistId: realArtistId, score: 10 },
           update: { score: { increment: 10 } },
         }),
       ]);
@@ -599,7 +652,7 @@ export class ArtistsService {
       this.publishUserUpdate(artist.userId, {
         type: 'NEW_FOLLOWER',
         followerId: userId,
-        artistId,
+        artistId: realArtistId,
       });
     } catch (err: any) {
       if (err.code === 'P2002') {
@@ -612,15 +665,16 @@ export class ArtistsService {
   }
 
   async unfollowArtist(userId: string, artistId: string) {
+    const realArtistId = await this.resolveArtistId(artistId);
     const follow = await this.prisma.follow.findUnique({
-      where: { userId_artistId: { userId, artistId } },
+      where: { userId_artistId: { userId, artistId: realArtistId } },
     });
 
     if (follow) {
       await this.prisma.$transaction([
         this.prisma.follow.delete({ where: { id: follow.id } }),
         this.prisma.artistProfile.update({
-          where: { id: artistId },
+          where: { id: realArtistId },
           data: { totalFollowers: { decrement: 1 } },
         }),
       ]);
@@ -630,16 +684,18 @@ export class ArtistsService {
   }
 
   async getFollowStatus(userId: string, artistId: string) {
+    const realArtistId = await this.resolveArtistId(artistId);
     const follow = await this.prisma.follow.findUnique({
-      where: { userId_artistId: { userId, artistId } },
+      where: { userId_artistId: { userId, artistId: realArtistId } },
     });
 
     return { isFollowing: !!follow, follow };
   }
 
   async updateNotifications(userId: string, artistId: string, data: any) {
+    const realArtistId = await this.resolveArtistId(artistId);
     const follow = await this.prisma.follow.findUnique({
-      where: { userId_artistId: { userId, artistId } },
+      where: { userId_artistId: { userId, artistId: realArtistId } },
     });
 
     if (!follow) {

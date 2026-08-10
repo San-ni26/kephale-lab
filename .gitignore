@@ -11,12 +11,6 @@ dist
 coverage
 .nyc_output
 .prisma/
-node_modules
-musique/
-packages/database/generated/
-apps/backend/dist-ncc/
-
-
 musique/
 packages/database/generated/
 apps/backend/dist-ncc/

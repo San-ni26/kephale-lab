@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { AccessControlService } from '../subscriptions/access.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AudioFingerprintService } from '../audio-fingerprint/audio-fingerprint.service';
+import { CacheService } from '../redis/cache.service';
 import { randomUUID } from 'crypto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -15,81 +16,103 @@ export class VideosService {
     private readonly accessControlService: AccessControlService,
     private readonly notificationsService: NotificationsService,
     private readonly audioFingerprintService: AudioFingerprintService,
+    private readonly cacheService: CacheService,
     @InjectQueue('media-processing') private readonly mediaQueue: Queue,
     private readonly s3Service: S3Service,
   ) {}
 
   async getVideos(userId: string | null, query: any, ip: string, sessionHeader?: string) {
     const { page = 1, limit = 20, type, artistId, search, sort = 'newest', refresh } = query;
-    const skip = (page - 1) * limit;
-    const where: any = { status: 'ACTIVE' };
-    if (type) where.type = type;
-    if (artistId) where.artistId = artistId;
-    if (search) {
-      where.OR = [
-        { title: { contains: search, mode: 'insensitive' } },
-        { artist: { stageName: { contains: search, mode: 'insensitive' } } },
-      ];
+    const cacheKey = `videos:list:${userId || 'anon'}:${JSON.stringify({ page, limit, type, artistId, search, sort })}`;
+
+    const fetchFn = async () => {
+      const skip = (page - 1) * limit;
+      const where: any = { status: 'ACTIVE' };
+      if (type) where.type = type;
+      if (artistId) where.artistId = artistId;
+      if (search) {
+        where.OR = [
+          { title: { contains: search, mode: 'insensitive' } },
+          { artist: { stageName: { contains: search, mode: 'insensitive' } } },
+        ];
+      }
+
+      const actualOrderBy = sort === 'popular' ? { views: 'desc' as const } : { createdAt: 'desc' as const };
+      const [total, videos] = await Promise.all([
+        this.prisma.video.count({ where }),
+        this.prisma.video.findMany({
+          where,
+          orderBy: actualOrderBy,
+          skip,
+          take: limit,
+          include: {
+            artist: { select: { id: true, stageName: true, avatar: true, isVerified: true } },
+            user: { select: { id: true, name: true, avatar: true } },
+            _count: { select: { likes: true, comments: true } },
+            likes: userId ? { where: { userId } } : false,
+          },
+        }),
+      ]);
+      
+      const formattedVideos = videos.map((v: any) => ({
+        ...v,
+        artist: v.artist || { id: v.user?.id, stageName: v.user?.name, avatar: v.user?.avatar, isVerified: false },
+        hasLiked: v.likes ? v.likes.length > 0 : false,
+        likes: undefined
+      }));
+
+      return {
+        data: formattedVideos,
+        pagination: { page, limit, total, totalPages: Math.ceil(total / limit), hasNext: page * limit < total, hasPrev: page > 1 },
+      };
+    };
+
+    if (this.cacheService && !refresh) {
+      return this.cacheService.getOrSet(cacheKey, fetchFn, 45);
     }
 
-    const actualOrderBy = sort === 'popular' ? { views: 'desc' as const } : { createdAt: 'desc' as const };
-    const [total, videos] = await Promise.all([
-      this.prisma.video.count({ where }),
-      this.prisma.video.findMany({
-        where,
-        orderBy: actualOrderBy,
-        skip,
-        take: limit,
-        include: {
-          artist: { select: { id: true, stageName: true, avatar: true, isVerified: true } },
-          user: { select: { id: true, name: true, avatar: true } },
-          _count: { select: { likes: true, comments: true } },
-          likes: userId ? { where: { userId } } : false,
-        },
-      }),
-    ]);
-    
-    const formattedVideos = videos.map((v: any) => ({
-      ...v,
-      artist: v.artist || { id: v.user?.id, stageName: v.user?.name, avatar: v.user?.avatar, isVerified: false },
-      hasLiked: v.likes ? v.likes.length > 0 : false,
-      likes: undefined
-    }));
-
-    return {
-      data: formattedVideos,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit), hasNext: page * limit < total, hasPrev: page > 1 },
-    };
+    return fetchFn();
   }
 
   async getMyVideos(userId: string, query: any) {
     const { page = 1, limit = 30, type } = query;
-    const skip = (page - 1) * limit;
-    
-    const artist = await this.prisma.artistProfile.findUnique({ where: { userId } });
-    const where: any = { status: { not: 'INACTIVE' } };
-    if (artist) {
-      where.artistId = artist.id;
-    } else {
-      where.userId = userId;
-    }
-    if (type) where.type = type;
+    const cacheKey = `videos:mine:${userId}:${JSON.stringify({ page, limit, type })}`;
 
-    const [total, videos] = await Promise.all([
-      this.prisma.video.count({ where }),
-      this.prisma.video.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        include: { _count: { select: { likes: true, comments: true } } },
-      }),
-    ]);
+    const fetchFn = async () => {
+      const skip = (page - 1) * limit;
+      const artist = await this.prisma.artistProfile.findUnique({
+        where: { userId },
+        select: { id: true },
+      });
+      const where: any = { status: { not: 'INACTIVE' } };
+      if (artist) {
+        where.artistId = artist.id;
+      } else {
+        where.userId = userId;
+      }
+      if (type) where.type = type;
 
-    return {
-      data: videos,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit), hasNext: page * limit < total, hasPrev: page > 1 },
+      const [total, videos] = await Promise.all([
+        this.prisma.video.count({ where }),
+        this.prisma.video.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy: { createdAt: 'desc' },
+          include: { _count: { select: { likes: true, comments: true } } },
+        }),
+      ]);
+
+      return {
+        data: videos,
+        pagination: { page, limit, total, totalPages: Math.ceil(total / limit), hasNext: page * limit < total, hasPrev: page > 1 },
+      };
     };
+
+    if (this.cacheService) {
+      return this.cacheService.getOrSet(cacheKey, fetchFn, 30);
+    }
+    return fetchFn();
   }
 
   async verifyAudioRights(userId: string, body: any) {
@@ -168,6 +191,13 @@ export class VideosService {
       payload: { videoId: video.id },
     }, { delay: 5000 });
 
+    // Invalidation immédiate du cache vidéo pour affichage instantané
+    try {
+      if (this.cacheService) {
+        await this.cacheService.delByPattern('videos:list:*');
+      }
+    } catch {}
+
     if (artistId) {
       const videoTypeStr = video.type === 'CLIP' ? 'un nouveau clip' : 'un nouveau reel';
       this.notificationsService.notifyFollowers(artistId, 'NEW_VIDEO', {
@@ -210,26 +240,48 @@ export class VideosService {
   }
 
   async updateVideo(userId: string, id: string, data: any) {
-    const artist = await this.prisma.artistProfile.findUnique({ where: { userId } });
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true } });
+    const artist = await this.prisma.artistProfile.findUnique({ where: { userId }, select: { id: true } });
     const video = await this.prisma.video.findUnique({ where: { id } });
 
-    const isOwner = video && ((artist && video.artistId === artist.id) || (video.userId === userId));
+    if (!video) throw new NotFoundException({ success: false, error: { code: 'NOT_FOUND', message: 'Video not found' } });
+
+    const isOwner = video.userId === userId || (artist && video.artistId === artist.id) || user?.role === 'ADMIN';
     if (!isOwner) throw new ForbiddenException({ success: false, error: { code: 'FORBIDDEN', message: 'Not your video' } });
 
-    return this.prisma.video.update({
+    const updated = await this.prisma.video.update({
       where: { id },
       data,
     });
+
+    if (this.cacheService) {
+      await Promise.all([
+        this.cacheService.delByPattern('videos:list:*'),
+        this.cacheService.delByPattern('videos:mine:*'),
+      ]).catch(() => {});
+    }
+
+    return updated;
   }
 
   async deleteVideo(userId: string, id: string) {
-    const artist = await this.prisma.artistProfile.findUnique({ where: { userId } });
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true } });
+    const artist = await this.prisma.artistProfile.findUnique({ where: { userId }, select: { id: true } });
     const video = await this.prisma.video.findUnique({ where: { id } });
 
-    const isOwner = video && ((artist && video.artistId === artist.id) || (video.userId === userId));
+    if (!video) throw new NotFoundException({ success: false, error: { code: 'NOT_FOUND', message: 'Video not found' } });
+
+    const isOwner = video.userId === userId || (artist && video.artistId === artist.id) || user?.role === 'ADMIN';
     if (!isOwner) throw new ForbiddenException({ success: false, error: { code: 'FORBIDDEN', message: 'Not your video' } });
 
     await this.prisma.video.update({ where: { id }, data: { status: 'INACTIVE' } });
+
+    if (this.cacheService) {
+      await Promise.all([
+        this.cacheService.delByPattern('videos:list:*'),
+        this.cacheService.delByPattern('videos:mine:*'),
+      ]).catch(() => {});
+    }
   }
 
   async streamVideo(userId: string, id: string) {
@@ -351,50 +403,59 @@ export class VideosService {
   }
 
   async watchVideo(userId: string, id: string, watchDurationSec: number, completed: boolean) {
-    const video = await this.prisma.video.findUnique({ where: { id } });
-    if (!video) throw new NotFoundException({ success: false, error: 'Video not found' });
-
-    if (video.price > 0) {
-      const hasAccess = await this.accessControlService.canAccessVideo(userId, video as any);
-      if (!hasAccess) {
-        throw new HttpException({
-          success: false,
-          error: { code: 'PAYMENT_REQUIRED', message: 'Purchase or active subscription required to register view' },
-        }, 403);
-      }
-    }
-
-    const existingView = await this.prisma.userVideoView.findUnique({
-      where: { userId_videoId: { userId, videoId: id } }
-    });
-
-    const maxAllowedDuration = video.duration > 0 ? Math.min(video.duration + 10, 3600) : 3600;
-    const sanitizedDuration = Math.min(watchDurationSec, maxAllowedDuration);
-    const ratio = video.duration > 0 ? sanitizedDuration / video.duration : 1;
-
-    let scoreChange = 0;
-    if (ratio > 0.6 || completed) scoreChange = 2;
-    else if (sanitizedDuration < 3 && video.duration > 5) scoreChange = -1;
-
-    if (scoreChange !== 0 && video.artistId && !existingView) {
-      await this.prisma.$executeRaw`
-        INSERT INTO "user_artist_affinities" ("id", "userId", "artistId", "score", "updatedAt")
-        VALUES (${randomUUID()}, ${userId}, ${video.artistId}, ${Math.max(scoreChange, 0)}, NOW())
-        ON CONFLICT ("userId", "artistId")
-        DO UPDATE SET "score" = GREATEST("user_artist_affinities"."score" + ${scoreChange}, 0), "updatedAt" = NOW();
-      `;
-    }
-
-    if ((ratio > 0.15 || completed) && !existingView) {
+    const dedupKey = `view:tracked:${userId}:${id}`;
+    if (this.cacheService) {
       try {
-        await this.prisma.$transaction([
-          this.prisma.userVideoView.create({ data: { userId, videoId: id } }),
-          this.prisma.video.update({ where: { id }, data: { views: { increment: 1 } } })
-        ]);
-      } catch (e: any) {
-        if (e.code !== 'P2002') console.error('Error tracking view:', e);
-      }
+        const alreadyTracked = await this.cacheService.get(dedupKey);
+        if (alreadyTracked) {
+          return { success: true, dedup: true };
+        }
+        await this.cacheService.set(dedupKey, '1', 90);
+      } catch {}
     }
+
+    // Exécution asynchrone non bloquante pour renvoyer la réponse HTTP immédiatement
+    (async () => {
+      try {
+        const video = await this.prisma.video.findUnique({
+          where: { id },
+          select: { id: true, duration: true, price: true, artistId: true }
+        });
+        if (!video) return;
+
+        const existingView = await this.prisma.userVideoView.findUnique({
+          where: { userId_videoId: { userId, videoId: id } }
+        });
+
+        const maxAllowedDuration = video.duration > 0 ? Math.min(video.duration + 10, 3600) : 3600;
+        const sanitizedDuration = Math.min(watchDurationSec, maxAllowedDuration);
+        const ratio = video.duration > 0 ? sanitizedDuration / video.duration : 1;
+
+        let scoreChange = 0;
+        if (ratio > 0.6 || completed) scoreChange = 2;
+        else if (sanitizedDuration < 3 && video.duration > 5) scoreChange = -1;
+
+        if (scoreChange !== 0 && video.artistId && !existingView) {
+          await this.prisma.$executeRaw`
+            INSERT INTO "user_artist_affinities" ("id", "userId", "artistId", "score", "updatedAt")
+            VALUES (${randomUUID()}, ${userId}, ${video.artistId}, ${Math.max(scoreChange, 0)}, NOW())
+            ON CONFLICT ("userId", "artistId")
+            DO UPDATE SET "score" = GREATEST("user_artist_affinities"."score" + ${scoreChange}, 0), "updatedAt" = NOW();
+          `;
+        }
+
+        if ((ratio > 0.15 || completed) && !existingView) {
+          await this.prisma.$transaction([
+            this.prisma.userVideoView.create({ data: { userId, videoId: id } }),
+            this.prisma.video.update({ where: { id }, data: { views: { increment: 1 } } })
+          ]);
+        }
+      } catch (e: any) {
+        if (e.code !== 'P2002') console.error('Error tracking view asynchronously:', e.message);
+      }
+    })().catch(() => {});
+
+    return { success: true };
   }
 
   async commentVideo(userId: string, id: string, content: string) {

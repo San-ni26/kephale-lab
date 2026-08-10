@@ -50,14 +50,13 @@ export default function GlobalAudioPlayer() {
         if (isSyncingRef.current) return;
         isSyncingRef.current = true;
 
-        // Unload existing sound safely before loading new one
+        // Non-blocking cleanup of previous sound to prevent lag when switching tracks
         if (soundRef.current) {
           const oldSound = soundRef.current;
           soundRef.current = null;
-          try {
-            await oldSound.stopAsync();
-            await oldSound.unloadAsync();
-          } catch (e) {}
+          oldSound.stopAsync().catch(() => {}).then(() => {
+            oldSound.unloadAsync().catch(() => {});
+          });
         }
 
         try {
@@ -100,9 +99,13 @@ export default function GlobalAudioPlayer() {
 
           console.log("GlobalAudioPlayer - Loading sound URI:", uri);
 
+          // Stream audio progressively (downloadFirst = false) for instant playback start
           const { sound } = await Audio.Sound.createAsync(
             { uri },
-            { shouldPlay: isPlaying },
+            {
+              shouldPlay: true,
+              progressUpdateIntervalMillis: 250,
+            },
             (status) => {
               if (status.isLoaded) {
                 setProgress(status.positionMillis / 1000, (status.durationMillis || 0) / 1000);
@@ -110,12 +113,12 @@ export default function GlobalAudioPlayer() {
                   nextTrack();
                 }
               }
-            }
+            },
+            false // downloadFirst = false -> Instant streaming
           );
 
           if (cancelled) {
-            await sound.stopAsync();
-            await sound.unloadAsync();
+            sound.stopAsync().catch(() => {}).then(() => sound.unloadAsync().catch(() => {}));
             isSyncingRef.current = false;
             return;
           }

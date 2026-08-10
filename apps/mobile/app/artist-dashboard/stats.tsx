@@ -33,7 +33,7 @@ export default function ArtistStatsScreen() {
   const { data, isLoading, refetch, isRefetching } = useQuery({
     queryKey: ['artist-dashboard'],
     queryFn: () => artistsAPI.getDashboard(),
-    enabled: user?.role === 'ARTIST',
+    enabled: user?.role === 'ARTIST' || user?.role === 'ADMIN' || !!user?.artistProfile,
   });
 
   const dashboard = data?.data?.data;

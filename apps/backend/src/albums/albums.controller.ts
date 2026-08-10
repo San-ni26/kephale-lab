@@ -76,9 +76,10 @@ export class AlbumsController {
   }
 
   @Get(':id/status')
-  @UseGuards(AuthGuard)
   async getAlbumStatus(@Req() req: Request, @Param('id') id: string) {
-    const data = await this.albumsService.getAlbumStatus(req.user!.userId, id);
+    // Auth optionnelle : utilisateurs non connectés → isPurchased: false
+    const userId = req.user?.userId || null;
+    const data = await this.albumsService.getAlbumStatus(userId, id);
     return { success: true, data };
   }
 

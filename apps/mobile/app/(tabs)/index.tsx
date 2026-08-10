@@ -55,9 +55,22 @@ export default function HomeScreen() {
       return;
     }
 
+    if (!isAuthenticated) {
+      Alert.alert('Connexion requise', 'Vous devez être connecté pour écouter ou acheter ce morceau.', [
+        { text: 'Annuler', style: 'cancel' },
+        { text: 'Se connecter', onPress: () => router.push('/(auth)/welcome' as any) }
+      ]);
+      return;
+    }
+
     try {
-      await tracksAPI.getStreamUrl(track.id);
-      setTrack(track, tracks);
+      const streamRes = await tracksAPI.getStreamUrl(track.id);
+      const streamUrl = streamRes.data?.data?.streamUrl;
+      const playableTrack = {
+        ...track,
+        ...(streamUrl ? { audioUrl: streamUrl } : {}),
+      };
+      setTrack(playableTrack, tracks);
     } catch (err: any) {
       if (err.response?.status === 401) {
         Alert.alert('Connexion requise', 'Vous devez être connecté pour écouter ou acheter ce morceau.', [
@@ -112,30 +125,44 @@ export default function HomeScreen() {
     }
   };
 
-  // Use a debounced search query or just pass it directly since useQuery caches it
+  // 1. Tracks (Music mode)
   const { data: tracksData, isLoading: isLoadingTracks } = useQuery({
     queryKey: ['tracks', 'latest', { isSingle: true, search: searchQuery, genre: selectedGenre }],
     queryFn: () => tracksAPI.list({ sort: 'newest', limit: 10, isSingle: true, search: searchQuery || undefined, genre: selectedGenre || undefined }),
+    enabled: mode === 'musique',
+    staleTime: 1000 * 60 * 5,
   });
 
-  const { data: livesData, isLoading: isLoadingLives } = useQuery({
-    queryKey: ['lives', 'active', searchQuery],
-    queryFn: () => livesAPI.list({ search: searchQuery || undefined }),
-  });
-
+  // 2. Artists (Music mode)
   const { data: artistsData, isLoading: isLoadingArtists } = useQuery({
     queryKey: ['artists', 'featured', searchQuery],
     queryFn: () => artistsAPI.list({ search: searchQuery || undefined }),
+    enabled: mode === 'musique',
+    staleTime: 1000 * 60 * 5,
   });
 
-  const { data: clipsData, isLoading: isLoadingClips } = useQuery({
-    queryKey: ['videos', 'clips', searchQuery],
-    queryFn: () => videosAPI.list({ type: 'CLIP', limit: 20, search: searchQuery || undefined }),
-  });
-
+  // 3. Albums (Music mode)
   const { data: homeAlbumsData, isLoading: isLoadingAlbums } = useQuery({
     queryKey: ['albums', 'popular', searchQuery, selectedGenre],
     queryFn: () => albumsAPI.list({ limit: 10, search: searchQuery || undefined, genre: selectedGenre || undefined }),
+    enabled: mode === 'musique',
+    staleTime: 1000 * 60 * 5,
+  });
+
+  // 4. Lives (Live mode or overview)
+  const { data: livesData, isLoading: isLoadingLives } = useQuery({
+    queryKey: ['lives', 'active', searchQuery],
+    queryFn: () => livesAPI.list({ search: searchQuery || undefined }),
+    enabled: mode === 'live' || mode === 'musique',
+    staleTime: 1000 * 60 * 2,
+  });
+
+  // 5. Clips (Clips mode or overview)
+  const { data: clipsData, isLoading: isLoadingClips } = useQuery({
+    queryKey: ['videos', 'clips', searchQuery],
+    queryFn: () => videosAPI.list({ type: 'CLIP', limit: 20, search: searchQuery || undefined }),
+    enabled: mode === 'clips' || mode === 'musique',
+    staleTime: 1000 * 60 * 5,
   });
 
   const { data: purchasesData } = useQuery({
@@ -145,6 +172,7 @@ export default function HomeScreen() {
       return res.data.data;
     },
     enabled: isAuthenticated,
+    staleTime: 1000 * 60 * 5,
   });
 
   const { data: notificationsData } = useQuery({
@@ -154,6 +182,7 @@ export default function HomeScreen() {
       return res.data.data;
     },
     enabled: isAuthenticated,
+    staleTime: 1000 * 60 * 2,
   });
 
   const tracks = tracksData?.data?.data || [];

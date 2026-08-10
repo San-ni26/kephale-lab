@@ -34,6 +34,13 @@ export default function MyReelsScreen() {
     mutationFn: (id: string) => videosAPI.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['my-reels'] });
+      queryClient.invalidateQueries({ queryKey: ['videos'] });
+      queryClient.invalidateQueries({ queryKey: ['my-videos'] });
+      queryClient.invalidateQueries({ queryKey: ['artist-dashboard'] });
+      Alert.alert('Succès', 'Le Reel a été supprimé.');
+    },
+    onError: (err: any) => {
+      Alert.alert('Erreur', err?.response?.data?.error?.message || 'Impossible de supprimer le Reel.');
     },
   });
 

@@ -79,52 +79,73 @@ export class TracksService {
     const { page = 1, limit = 20, genre, artistId, albumId, isSingle, search, sort = 'newest' } = query;
     const skip = (page - 1) * limit;
 
-    const where: any = { status: 'ACTIVE' };
-    if (genre) where.genre = { has: genre };
-    if (artistId) where.artistId = artistId;
-    if (albumId) where.albumId = albumId;
-    if (isSingle) where.albumId = null;
-    if (search) {
-      where.OR = [
-        { title: { contains: search, mode: 'insensitive' } },
-        { artist: { stageName: { contains: search, mode: 'insensitive' } } },
-      ];
-    }
+    const cacheKey = `tracks:list:${JSON.stringify({ page, limit, genre, artistId, albumId, isSingle, search, sort })}`;
 
-    const orderBy: any =
-      sort === 'popular' ? { plays: 'desc' }
-      : sort === 'price_asc' ? { price: 'asc' }
-      : sort === 'price_desc' ? { price: 'desc' }
-      : { createdAt: 'desc' };
+    const fetchFn = async () => {
+      const where: any = { status: 'ACTIVE' };
+      if (genre) where.genre = { has: genre };
+      if (artistId) where.artistId = artistId;
+      if (albumId) where.albumId = albumId;
+      if (isSingle) where.albumId = null;
+      if (search) {
+        where.OR = [
+          { title: { contains: search, mode: 'insensitive' } },
+          { artist: { stageName: { contains: search, mode: 'insensitive' } } },
+        ];
+      }
 
-    const [total, tracks] = await Promise.all([
-      this.prisma.track.count({ where }),
-      this.prisma.track.findMany({
-        where,
-        orderBy,
-        skip,
-        take: limit,
-        include: {
-          artist: {
-            select: { id: true, stageName: true, avatar: true, isVerified: true },
+      const orderBy: any =
+        sort === 'popular' ? { plays: 'desc' }
+        : sort === 'price_asc' ? { price: 'asc' }
+        : sort === 'price_desc' ? { price: 'desc' }
+        : { createdAt: 'desc' };
+
+      const [total, tracks] = await Promise.all([
+        this.prisma.track.count({ where }),
+        this.prisma.track.findMany({
+          where,
+          orderBy,
+          skip,
+          take: limit,
+          select: {
+            id: true,
+            title: true,
+            duration: true,
+            coverUrl: true,
+            audioUrl: true,
+            price: true,
+            currency: true,
+            genre: true,
+            bpm: true,
+            key: true,
+            plays: true,
+            isExplicit: true,
+            releaseDate: true,
+            createdAt: true,
+            artistId: true,
+            albumId: true,
+            status: true,
+            artist: {
+              select: { id: true, stageName: true, avatar: true, isVerified: true },
+            },
+            album: { select: { id: true, title: true, coverUrl: true } },
+            _count: { select: { likes: true, purchases: true } },
           },
-          album: { select: { id: true, title: true } },
-          _count: { select: { likes: true, purchases: true } },
+        }),
+      ]);
+
+      return {
+        data: tracks,
+        pagination: {
+          page, limit, total,
+          totalPages: Math.ceil(total / limit),
+          hasNext: page * limit < total,
+          hasPrev: page > 1,
         },
-      }),
-    ]);
-
-    const sanitizedTracks = tracks.map(({ fingerprint, s3Key, ...track }: any) => track);
-
-    return {
-      data: sanitizedTracks,
-      pagination: {
-        page, limit, total,
-        totalPages: Math.ceil(total / limit),
-        hasNext: page * limit < total,
-        hasPrev: page > 1,
-      },
+      };
     };
+
+    return this.cacheService.getOrSet(cacheKey, fetchFn, 60);
   }
 
   async getMyTracks(userId: string, query: any) {
@@ -145,21 +166,43 @@ export class TracksService {
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
-        include: {
+        select: {
+          id: true,
+          title: true,
+          duration: true,
+          coverUrl: true,
+          audioUrl: true,
+          price: true,
+          currency: true,
+          genre: true,
+          bpm: true,
+          key: true,
+          plays: true,
+          isExplicit: true,
+          releaseDate: true,
+          createdAt: true,
+          artistId: true,
+          albumId: true,
+          status: true,
           artist: {
             select: { id: true, stageName: true, avatar: true, isVerified: true },
           },
-          album: { select: { id: true, title: true } },
+          album: { select: { id: true, title: true, coverUrl: true } },
           _count: { select: { likes: true, purchases: true } },
         },
       }),
     ]);
 
-    const sanitizedTracks = tracks.map(({ fingerprint, s3Key, ...track }: any) => track);
-
     return {
-      data: sanitizedTracks,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit), hasNext: page * limit < total, hasPrev: page > 1 },
+      data: tracks,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      },
     };
   }
 
@@ -230,45 +273,64 @@ export class TracksService {
   }
 
   async streamTrack(userId: string, id: string) {
-    const track = await this.prisma.track.findUnique({ where: { id } });
-    if (!track || track.status !== 'ACTIVE') {
-      throw new NotFoundException({ success: false, error: { code: 'NOT_FOUND', message: 'Track not found' } });
-    }
+    const cacheKey = `stream:track:${userId}:${id}`;
 
-    const hasAccess = await this.accessControlService.canAccessTrack(userId, track);
-    if (!hasAccess) {
-      throw new ForbiddenException({
-        success: false,
-        error: { code: 'PAYMENT_REQUIRED', message: 'Purchase or active subscription required to stream this track' },
-      });
-    }
+    return this.cacheService.getOrSet(
+      cacheKey,
+      async () => {
+        const track = await this.prisma.track.findUnique({
+          where: { id },
+          select: {
+            id: true,
+            status: true,
+            price: true,
+            audioUrl: true,
+            s3Key: true,
+            duration: true,
+            artistId: true,
+            albumId: true,
+          },
+        });
 
-    this.prisma.track.updateMany({ where: { id }, data: { plays: { increment: 1 } } }).catch(() => {});
+        if (!track || track.status !== 'ACTIVE') {
+          throw new NotFoundException({ success: false, error: { code: 'NOT_FOUND', message: 'Track not found' } });
+        }
 
-    // SÉCURITÉ : Générer une URL pré-signée à courte durée de vie (60s)
-    // L'URL expire rapidement → impossible de la partager pour un accès permanent
-    let streamUrl = track.audioUrl;
-    if (track.s3Key) {
-      try {
-        streamUrl = await this.s3Service.getSignedDownloadUrl(track.s3Key);
-      } catch (err) {
-        console.error('[TracksService] Erreur génération URL signée:', err);
-        // Fallback sur l'URL directe si la signature échoue (dégradé)
-      }
-    } else if (track.audioUrl) {
-      const s3Key = this.s3Service.extractS3KeyFromUrl(track.audioUrl);
-      if (s3Key) {
-        try {
-          streamUrl = await this.s3Service.getSignedDownloadUrl(s3Key);
-        } catch {}
-      }
-    }
+        const hasAccess = await this.accessControlService.canAccessTrack(userId, track);
+        if (!hasAccess) {
+          throw new ForbiddenException({
+            success: false,
+            error: { code: 'PAYMENT_REQUIRED', message: 'Purchase or active subscription required to stream this track' },
+          });
+        }
 
-    return {
-      streamUrl,
-      duration: track.duration,
-      expiresIn: S3Service.SIGNED_URL_TTL_SECONDS,
-    };
+        this.prisma.track.updateMany({ where: { id }, data: { plays: { increment: 1 } } }).catch(() => {});
+
+        // SÉCURITÉ : Générer une URL pré-signée à courte durée de vie (60s)
+        let streamUrl = track.audioUrl;
+        if (track.s3Key) {
+          try {
+            streamUrl = await this.s3Service.getSignedDownloadUrl(track.s3Key);
+          } catch (err) {
+            console.error('[TracksService] Erreur génération URL signée:', err);
+          }
+        } else if (track.audioUrl) {
+          const s3Key = this.s3Service.extractS3KeyFromUrl(track.audioUrl);
+          if (s3Key) {
+            try {
+              streamUrl = await this.s3Service.getSignedDownloadUrl(s3Key);
+            } catch {}
+          }
+        }
+
+        return {
+          streamUrl,
+          duration: track.duration,
+          expiresIn: S3Service.SIGNED_URL_TTL_SECONDS,
+        };
+      },
+      50 // 50s TTL (signed URL is valid 60s)
+    );
   }
 
   /**

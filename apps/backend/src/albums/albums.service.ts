@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException, Optional } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { AccessControlService } from '../subscriptions/access.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { CacheService } from '../redis/cache.service';
 
 @Injectable()
 export class AlbumsService {
@@ -9,6 +10,7 @@ export class AlbumsService {
     private readonly prisma: PrismaClient,
     private readonly accessControlService: AccessControlService,
     private readonly notificationsService: NotificationsService,
+    @Optional() private readonly cacheService?: CacheService,
   ) {}
 
   async createAlbum(userId: string, data: any) {
@@ -45,42 +47,51 @@ export class AlbumsService {
 
   async getAlbums(query: any) {
     const { page = 1, limit = 20, artistId, status = 'ACTIVE', search, genre } = query;
-    const skip = (page - 1) * limit;
-    const where: any = { status };
-    if (artistId) where.artistId = artistId;
-    if (search) {
-      where.OR = [
-        { title: { contains: search, mode: 'insensitive' } },
-        { artist: { stageName: { contains: search, mode: 'insensitive' } } }
-      ];
-    }
-    if (genre) {
-      where.tracks = { some: { genre: { has: genre } } };
-    }
+    const cacheKey = `albums:list:${JSON.stringify({ page, limit, artistId, status, search, genre })}`;
 
-    const [total, albums] = await Promise.all([
-      this.prisma.album.count({ where }),
-      this.prisma.album.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { releaseDate: 'desc' },
-        include: {
-          artist: { select: { id: true, stageName: true, avatar: true, isVerified: true } },
-          _count: { select: { tracks: true, purchases: true } },
+    const fetchFn = async () => {
+      const skip = (page - 1) * limit;
+      const where: any = { status };
+      if (artistId) where.artistId = artistId;
+      if (search) {
+        where.OR = [
+          { title: { contains: search, mode: 'insensitive' } },
+          { artist: { stageName: { contains: search, mode: 'insensitive' } } }
+        ];
+      }
+      if (genre) {
+        where.tracks = { some: { genre: { has: genre } } };
+      }
+
+      const [total, albums] = await Promise.all([
+        this.prisma.album.count({ where }),
+        this.prisma.album.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy: { releaseDate: 'desc' },
+          include: {
+            artist: { select: { id: true, stageName: true, avatar: true, isVerified: true } },
+            _count: { select: { tracks: true, purchases: true } },
+          },
+        }),
+      ]);
+
+      return {
+        data: albums,
+        pagination: {
+          page, limit, total,
+          totalPages: Math.ceil(total / limit),
+          hasNext: page * limit < total,
+          hasPrev: page > 1,
         },
-      }),
-    ]);
-
-    return {
-      data: albums,
-      pagination: {
-        page, limit, total,
-        totalPages: Math.ceil(total / limit),
-        hasNext: page * limit < total,
-        hasPrev: page > 1,
-      },
+      };
     };
+
+    if (this.cacheService) {
+      return this.cacheService.getOrSet(cacheKey, fetchFn, 60);
+    }
+    return fetchFn();
   }
 
   async getMyAlbums(userId: string, query: any) {
@@ -111,40 +122,55 @@ export class AlbumsService {
   }
 
   async getAlbumById(id: string) {
-    const album = await this.prisma.album.findUnique({
-      where: { id },
-      include: {
-        artist: { select: { id: true, stageName: true, avatar: true, coverImage: true, isVerified: true } },
-        tracks: {
-          where: { status: { not: 'INACTIVE' } },
-          orderBy: { createdAt: 'asc' },
-          include: {
-            artist: { select: { id: true, stageName: true, avatar: true, isVerified: true } },
-            _count: { select: { likes: true, purchases: true } },
+    const fetchAlbum = async () => {
+      const album = await this.prisma.album.findUnique({
+        where: { id },
+        include: {
+          artist: { select: { id: true, stageName: true, avatar: true, coverImage: true, isVerified: true } },
+          tracks: {
+            where: { status: { not: 'INACTIVE' } },
+            orderBy: { createdAt: 'asc' },
+            select: {
+              id: true,
+              title: true,
+              coverUrl: true,
+              audioUrl: true,
+              duration: true,
+              genre: true,
+              price: true,
+              currency: true,
+              plays: true,
+              createdAt: true,
+              artistId: true,
+              albumId: true,
+              isExplicit: true,
+              artist: { select: { id: true, stageName: true, avatar: true, isVerified: true } },
+              _count: { select: { likes: true, purchases: true } },
+            },
           },
+          _count: { select: { tracks: true, purchases: true } },
         },
-        _count: { select: { tracks: true, purchases: true } },
-      },
-    });
+      });
 
-    if (!album) {
-      throw new NotFoundException({ success: false, error: { code: 'NOT_FOUND', message: 'Album not found' } });
-    }
+      if (!album) {
+        throw new NotFoundException({ success: false, error: { code: 'NOT_FOUND', message: 'Album not found' } });
+      }
 
-    const sanitizedAlbum = {
-      ...album,
-      tracks: (album.tracks || []).map(({ fingerprint, s3Key, ...track }: any) => track),
+      return album;
     };
 
-    return sanitizedAlbum;
+    if (this.cacheService) {
+      return this.cacheService.getOrSet(`album:${id}`, fetchAlbum, 120);
+    }
+    return fetchAlbum();
   }
 
-  async getAlbumStatus(userId: string, id: string) {
+  async getAlbumStatus(userId: string | null, id: string) {
+    if (!userId) return { isPurchased: false };
     const album = await this.prisma.album.findUnique({ where: { id } });
     if (!album) {
       throw new NotFoundException({ success: false, error: { code: 'NOT_FOUND', message: 'Album not found' } });
     }
-
     const isPurchased = await this.accessControlService.canAccessAlbum(userId, album);
     return { isPurchased };
   }
@@ -168,6 +194,7 @@ export class AlbumsService {
       },
     });
 
+    this.cacheService?.del(`album:${id}`).catch(() => {});
     return updated;
   }
 
@@ -185,6 +212,7 @@ export class AlbumsService {
     });
 
     await this.prisma.album.delete({ where: { id } });
+    this.cacheService?.del(`album:${id}`).catch(() => {});
   }
 
   async addTrackToAlbum(userId: string, id: string, trackId: string) {
@@ -204,6 +232,8 @@ export class AlbumsService {
       where: { id: trackId },
       data: { albumId: id },
     });
+
+    this.cacheService?.del(`album:${id}`).catch(() => {});
   }
 
   async removeTrackFromAlbum(userId: string, id: string, trackId: string) {
@@ -218,5 +248,7 @@ export class AlbumsService {
       where: { id: trackId, albumId: id, artistId: artist.id },
       data: { albumId: null },
     });
+
+    this.cacheService?.del(`album:${id}`).catch(() => {});
   }
 }

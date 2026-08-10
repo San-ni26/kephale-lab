@@ -127,16 +127,10 @@ export class UploadService {
         Bucket: bucketName,
         Key: key,
         ContentType: contentType,
-        // Additional S3 metadata for auditing
-        Metadata: {
-          'uploaded-by': userId,
-          'original-name': Buffer.from(filename).toString('base64').substring(0, 100),
-          'upload-type': type,
-        },
       });
 
-      // Presigned URL valid for 15 minutes only
-      const presignedUrl = await getSignedUrl(client, command, { expiresIn: 900 });
+      // Presigned URL valid for 1 hour
+      const presignedUrl = await getSignedUrl(client, command, { expiresIn: 3600 });
 
       const bucketPublicUrl = this.configService.get<string>('S3_BUCKET_PUBLIC_URL');
       let publicUrl = bucketPublicUrl

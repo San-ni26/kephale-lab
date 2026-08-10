@@ -8,6 +8,7 @@ import { useAuthStore, usePlayerStore, useOfflineStore } from '../../src/stores'
 import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { playlistsAPI, userAPI } from '../../src/lib/api';
+import TextInputModal from '../../src/components/TextInputModal';
 
 type LibraryMode = 'achats' | 'telechargements' | 'playlists';
 
@@ -16,6 +17,7 @@ export default function LibraryScreen() {
   const [mode, setMode] = useState<LibraryMode>('achats');
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
+  const [showCreatePlaylistModal, setShowCreatePlaylistModal] = useState(false);
 
   const { data: playlistsData, isLoading: isLoadingPlaylists, refetch: refetchPlaylists } = useQuery({
     queryKey: ['playlists'],
@@ -596,18 +598,7 @@ export default function LibraryScreen() {
           <View style={styles.listContainer}>
             <TouchableOpacity
               style={styles.newPlaylistButton}
-              onPress={() => {
-                Alert.prompt('Nouvelle Playlist', 'Nom de la playlist', async (text) => {
-                  if (text) {
-                    try {
-                      await playlistsAPI.create(text);
-                      refetchPlaylists();
-                    } catch (e) {
-                      Alert.alert('Erreur', 'Impossible de créer la playlist');
-                    }
-                  }
-                });
-              }}
+              onPress={() => setShowCreatePlaylistModal(true)}
             >
               <Feather name="plus" size={24} color="#FF5A00" />
               <Text style={styles.newPlaylistText}>Créer une playlist</Text>
@@ -638,6 +629,23 @@ export default function LibraryScreen() {
           </View>
         )}
       </ScrollView>
+
+      <TextInputModal
+        visible={showCreatePlaylistModal}
+        title="Nouvelle Playlist"
+        placeholder="Nom de la playlist"
+        confirmText="Créer"
+        onConfirm={async (text) => {
+          try {
+            await playlistsAPI.create(text);
+            refetchPlaylists();
+            setShowCreatePlaylistModal(false);
+          } catch (e) {
+            Alert.alert('Erreur', 'Impossible de créer la playlist');
+          }
+        }}
+        onCancel={() => setShowCreatePlaylistModal(false)}
+      />
     </SafeAreaView>
   );
 }

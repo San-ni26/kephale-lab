@@ -56,9 +56,10 @@ export default function PublicAlbumScreen() {
     queryKey: ['album', id],
     queryFn: () => albumsAPI.getById(id as string),
     enabled: !!id,
+    staleTime: 1000 * 60 * 5,
   });
 
-  const album: Album & { isPurchased?: boolean; _count?: { tracks: number; purchases: number } } = albumData?.data?.data;
+  const album: (Album & { isPurchased?: boolean; _count?: { tracks: number; purchases: number } }) | undefined = albumData?.data?.data ?? albumData?.data;
 
   const { data: purchasesData } = useQuery({
     queryKey: ['my-purchases'],
@@ -67,6 +68,7 @@ export default function PublicAlbumScreen() {
       return res.data?.data || [];
     },
     enabled: isAuthenticated,
+    staleTime: 1000 * 60 * 5,
   });
 
   const purchases = purchasesData || [];
@@ -75,15 +77,39 @@ export default function PublicAlbumScreen() {
   const isPurchased = Boolean(album?.isPurchased || isAlbumPurchased);
 
   const handlePlayTrack = async (track: Track, allTracks: Track[]) => {
+    const trackWithAlbumAndArtist = {
+      ...track,
+      coverUrl: track.coverUrl || album?.coverUrl,
+      artist: track.artist || { id: album?.artist?.id || album?.artistId, stageName: album?.artist?.stageName, avatar: album?.artist?.avatar },
+    };
+    const allTracksWithData = allTracks.map((t) => ({
+      ...t,
+      coverUrl: t.coverUrl || album?.coverUrl,
+      artist: t.artist || { id: album?.artist?.id || album?.artistId, stageName: album?.artist?.stageName, avatar: album?.artist?.avatar },
+    }));
+
     const isUnlocked = track.price === 0 || (album && album.price === 0) || isAlbumPurchased || purchasedTrackIds.has(track.id);
     if (isUnlocked) {
-      setTrack(track, allTracks);
+      setTrack(trackWithAlbumAndArtist as any, allTracksWithData as any);
+      return;
+    }
+
+    if (!isAuthenticated) {
+      Alert.alert('Connexion requise', 'Vous devez être connecté pour écouter ou acheter ce morceau.', [
+        { text: 'Annuler', style: 'cancel' },
+        { text: 'Se connecter', onPress: () => router.push('/(auth)/welcome' as any) }
+      ]);
       return;
     }
 
     try {
-      await tracksAPI.getStreamUrl(track.id);
-      setTrack(track, allTracks);
+      const streamRes = await tracksAPI.getStreamUrl(track.id);
+      const streamUrl = streamRes.data?.data?.streamUrl;
+      const playableTrack = {
+        ...trackWithAlbumAndArtist,
+        ...(streamUrl ? { audioUrl: streamUrl } : {}),
+      };
+      setTrack(playableTrack as any, allTracksWithData as any);
     } catch (err: any) {
       if (err.response?.status === 401) {
         Alert.alert('Connexion requise', 'Vous devez être connecté pour écouter ou acheter ce morceau.', [
@@ -141,9 +167,9 @@ export default function PublicAlbumScreen() {
       if (res.data?.success) {
         Alert.alert('Succès', 'Achat réussi !');
         checkAuth();
-        if (type === 'TRACK') {
-          const boughtTrack = album.tracks?.find(t => t.id === id);
-          if (boughtTrack) setTrack(boughtTrack, album.tracks || []);
+        if (type === 'TRACK' && album?.tracks) {
+          const boughtTrack = album.tracks.find(t => t.id === id);
+          if (boughtTrack) setTrack(boughtTrack, album.tracks);
         }
       }
     } catch (e: any) {

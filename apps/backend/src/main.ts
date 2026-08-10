@@ -3,11 +3,16 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import helmet from 'helmet';
+import compression from 'compression';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     rawBody: true, // Required for Stripe webhook signature verification
   });
+
+  // ── HTTP Response Compression (Gzip / Deflate) ───────────────────────────
+  // Réduit la taille des réponses JSON API de 70% à 90% sur le réseau mobile
+  app.use(compression());
 
   // ── Security Headers (Helmet) ─────────────────────────────────────────────
   app.use(

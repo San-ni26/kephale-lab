@@ -48,6 +48,12 @@ export class AccessControlService {
 
     const cacheKey = `access:track:${userId}:${track.id}`;
 
+    try {
+      const cached = await this.redis.get(cacheKey);
+      if (cached === '1') return true;
+      if (cached === '0') return false;
+    } catch {}
+
     const orConditions: any[] = [{ userId, trackId: track.id, status: 'SUCCEEDED' }];
     if (track.albumId) {
       orConditions.push({ userId, albumId: track.albumId, status: 'SUCCEEDED' });
@@ -68,12 +74,6 @@ export class AccessControlService {
       return true;
     }
 
-    try {
-      const cached = await this.redis.get(cacheKey);
-      if (cached === '1') return true;
-      if (cached === '0') return false;
-    } catch {}
-
     const hasAccess = await this.checkAndConsumeSubscriptionQuota(userId);
 
     try {
@@ -87,6 +87,12 @@ export class AccessControlService {
     if (!video.price || video.price <= 0) return true;
 
     const cacheKey = `access:video:${userId}:${video.id}`;
+
+    try {
+      const cached = await this.redis.get(cacheKey);
+      if (cached === '1') return true;
+      if (cached === '0') return false;
+    } catch {}
 
     const purchase = await this.prisma.purchase.findFirst({
       where: { userId, videoId: video.id, status: 'SUCCEEDED' },
@@ -103,12 +109,6 @@ export class AccessControlService {
       return true;
     }
 
-    try {
-      const cached = await this.redis.get(cacheKey);
-      if (cached === '1') return true;
-      if (cached === '0') return false;
-    } catch {}
-
     const hasAccess = await this.checkAndConsumeSubscriptionQuota(userId);
 
     try {
@@ -122,6 +122,12 @@ export class AccessControlService {
     if (!album.price || album.price <= 0) return true;
 
     const cacheKey = `access:album:${userId}:${album.id}`;
+
+    try {
+      const cached = await this.redis.get(cacheKey);
+      if (cached === '1') return true;
+      if (cached === '0') return false;
+    } catch {}
 
     const purchase = await this.prisma.purchase.findFirst({
       where: { userId, albumId: album.id, status: 'SUCCEEDED' },
@@ -137,12 +143,6 @@ export class AccessControlService {
       try { await this.redis.setex(cacheKey, ACCESS_CACHE_TTL, '1'); } catch {}
       return true;
     }
-
-    try {
-      const cached = await this.redis.get(cacheKey);
-      if (cached === '1') return true;
-      if (cached === '0') return false;
-    } catch {}
 
     let hasAccess = false;
     const sub = await this.prisma.subscription.findUnique({ where: { userId } });

@@ -416,6 +416,22 @@ export default function CreateReelStudioScreen() {
 
   // Traitement et pré-upload immédiat pour l'analyse spectrale instantanée
   const processSelectedVideo = async (asset: DocumentPicker.DocumentPickerAsset) => {
+    // Vérification de la taille maximale (limite Supabase Storage 48 Mo)
+    try {
+      const fileInfo = await FileSystem.getInfoAsync(asset.uri);
+      if (fileInfo.exists && typeof fileInfo.size === 'number') {
+        const sizeMb = fileInfo.size / (1024 * 1024);
+        if (sizeMb > 48) {
+          Alert.alert(
+            'Vidéo trop volumineuse',
+            `Cette vidéo pèse ${sizeMb.toFixed(1)} Mo. La taille maximale pour un Reel est de 48 Mo.\n\nVeuillez sélectionner une vidéo plus courte (max 60s) ou choisir une qualité standard 720p/1080p.`,
+            [{ text: 'Compris' }]
+          );
+          return;
+        }
+      }
+    } catch {}
+
     setVideoFile(asset);
     setUploadedS3Data(null);
     if (!title) setTitle(asset.name.replace(/\.[^.]+$/, ''));
@@ -425,6 +441,13 @@ export default function CreateReelStudioScreen() {
 
     // Générer immédiatement les vraies vignettes extraites de la vidéo pour la timeline
     generateTimelineThumbnails(asset.uri, 60).catch(() => {});
+
+    // Générer immédiatement la miniature (image 0s) par défaut pour assurer que la vidéo ait toujours une image
+    VideoThumbnails.getThumbnailAsync(asset.uri, { time: 0, quality: 0.5 })
+      .then(({ uri }) => {
+        if (uri) setThumbnailUri(uri);
+      })
+      .catch(() => {});
 
     // Déclencher le pré-upload S3 en tâche de fond pour autoriser l'analyse acoustique Chromaprint
     setIsUploadingPreVideo(true);
@@ -732,20 +755,32 @@ export default function CreateReelStudioScreen() {
     setUploadProgress(5);
 
     try {
-      // 1. Upload miniature si sélectionnée
+      // 1. Upload miniature (choisie par l'utilisateur ou extraite automatiquement)
       let thumbnailUrl: string | undefined = undefined;
-      if (thumbnailUri) {
-        const thumbPresigned = await uploadAPI.getPresignedUrl({
-          filename: 'thumb_reel.jpg',
-          contentType: 'image/jpeg',
-          type: 'image',
-        });
-        await FileSystem.uploadAsync(thumbPresigned.data.data.uploadUrl, thumbnailUri, {
-          httpMethod: 'PUT',
-          headers: { 'Content-Type': 'image/jpeg' },
-          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-        });
-        thumbnailUrl = thumbPresigned.data.data.publicUrl;
+      let effectiveThumb = thumbnailUri;
+      if (!effectiveThumb && videoFile?.uri) {
+        try {
+          const autoRes = await VideoThumbnails.getThumbnailAsync(videoFile.uri, { time: 0, quality: 0.5 });
+          if (autoRes?.uri) effectiveThumb = autoRes.uri;
+        } catch {}
+      }
+
+      if (effectiveThumb) {
+        try {
+          const thumbPresigned = await uploadAPI.getPresignedUrl({
+            filename: 'thumb_reel.jpg',
+            contentType: 'image/jpeg',
+            type: 'image',
+          });
+          await FileSystem.uploadAsync(thumbPresigned.data.data.uploadUrl, effectiveThumb, {
+            httpMethod: 'PUT',
+            headers: { 'Content-Type': 'image/jpeg' },
+            uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+          });
+          thumbnailUrl = thumbPresigned.data.data.publicUrl;
+        } catch (e) {
+          console.warn('[Studio] Thumbnail upload skipped:', e);
+        }
       }
       setUploadProgress(25);
 
@@ -780,7 +815,11 @@ export default function CreateReelStudioScreen() {
 
         const uploadRes = await uploadTask.uploadAsync();
         if (uploadRes?.status !== 200 && uploadRes?.status !== 204) {
-          throw new Error(`Upload vidéo échoué (${uploadRes?.status})`);
+          console.error('[StudioReel] Upload S3 failed:', uploadRes?.status, uploadRes?.body);
+          if (uploadRes?.status === 413 || uploadRes?.body?.includes('EntityTooLarge')) {
+            throw new Error(`La vidéo dépasse la taille maximale autorisée (48 Mo). Veuillez choisir une vidéo plus courte ou compressée en 720p.`);
+          }
+          throw new Error(`Upload vidéo échoué (erreur ${uploadRes?.status || 'serveur'}). Veuillez réessayer.`);
         }
         finalPublicUrl = fallbackPublicUrl;
         finalS3Key = fallbackKey;

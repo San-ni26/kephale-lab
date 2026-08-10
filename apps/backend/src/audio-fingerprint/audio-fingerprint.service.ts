@@ -23,19 +23,30 @@ if (ffmpegStatic) ffmpeg.setFfmpegPath(ffmpegStatic as any);
 if (ffprobeStatic?.path) ffmpeg.setFfprobePath(ffprobeStatic.path as any);
 
 // Chargement robuste du module C++ natif
-let audiomatcher: any;
-try {
-  audiomatcher = require(path.join(__dirname, 'cpp-matcher/build/Release/audiomatcher.node'));
-} catch (e1) {
+let audiomatcher: any = null;
+const possiblePaths = [
+  path.join(process.cwd(), 'src/audio-fingerprint/cpp-matcher/build/Release/audiomatcher.node'),
+  path.join(process.cwd(), 'apps/backend/src/audio-fingerprint/cpp-matcher/build/Release/audiomatcher.node'),
+  path.join(__dirname, 'cpp-matcher/build/Release/audiomatcher.node'),
+  path.join(__dirname, '../src/audio-fingerprint/cpp-matcher/build/Release/audiomatcher.node'),
+  path.join(__dirname, '../../src/audio-fingerprint/cpp-matcher/build/Release/audiomatcher.node'),
+  path.join(__dirname, '../../../../src/audio-fingerprint/cpp-matcher/build/Release/audiomatcher.node'),
+];
+
+for (const p of possiblePaths) {
   try {
-    audiomatcher = require(path.join(__dirname, '../../../../src/audio-fingerprint/cpp-matcher/build/Release/audiomatcher.node'));
-  } catch (e2) {
-    try {
-      audiomatcher = require(path.join(process.cwd(), 'apps/backend/src/audio-fingerprint/cpp-matcher/build/Release/audiomatcher.node'));
-    } catch (e3) {
-      console.warn("⚠️ Impossible de charger le module C++ audiomatcher.node");
+    if (fs.existsSync(p)) {
+      audiomatcher = require(p);
+      console.log('✅ Module C++ audiomatcher.node chargé avec succès depuis:', p);
+      break;
     }
+  } catch (e) {
+    // continue to next path
   }
+}
+
+if (!audiomatcher) {
+  console.warn("⚠️ Impossible de charger le module C++ audiomatcher.node (mode dégradé activé)");
 }
 
 // ── Configuration ───────────────────────────────────────────────────────────────
@@ -403,6 +414,7 @@ export class AudioFingerprintService {
       const response = await fetch(`https://${host}/v1/identify`, {
         method: 'POST',
         body: formData,
+        signal: AbortSignal.timeout(3000),
       });
 
       const json: any = await response.json();
@@ -447,6 +459,7 @@ export class AudioFingerprintService {
       const response = await fetch('https://api.audd.io/', {
         method: 'POST',
         body: formData,
+        signal: AbortSignal.timeout(3000),
       });
 
       const json: any = await response.json();
@@ -628,16 +641,29 @@ export class AudioFingerprintService {
       originalAudioName, title, description,
     } = params;
 
+    const s3Key = videoS3Key || (videoUrl ? this.extractS3KeyFromUrl(videoUrl) : null);
+    const cacheKey = `rights:verify:${userId}:${s3Key || trackId || originalAudioName || 'default'}`;
+
+    // ── Vérification du cache Redis ──
+    try {
+      const cached = await this.redis.get(cacheKey);
+      if (cached) {
+        console.log(`[AudioFingerprint] Returning cached verification for ${cacheKey}`);
+        return JSON.parse(cached);
+      }
+    } catch {}
+
     // ── Pré-vérification : utilisateur bloqué par copyright strikes ? ────────
     const { blocked, activeStrikes } = await this.checkUserStrikes(userId);
     if (blocked) {
-      return {
+      const blockedRes: FingerprintMatchResult = {
         isCopyrighted: false,
         isAuthorized: false,
         rightsStatus: 'REQUIRES_PURCHASE',
         tokensRequired: 0,
         message: `Votre compte est temporairement bloqué pour violation de droits d'auteur (${activeStrikes} strikes actifs). Veuillez contacter le support.`,
       };
+      return blockedRes;
     }
 
     // ── COUCHE 1 : trackId explicite ─────────────────────────────────────────
@@ -649,7 +675,9 @@ export class AudioFingerprintService {
 
       if (track) {
         const result = await this.verifyRightsForTrack(userId, track);
-        return { ...result, detectionMethod: 'TRACK_ID' };
+        const fullResult = { ...result, detectionMethod: 'TRACK_ID' as const };
+        try { await this.redis.setex(cacheKey, 600, JSON.stringify(fullResult)); } catch {}
+        return fullResult;
       }
     }
 
@@ -657,13 +685,15 @@ export class AudioFingerprintService {
     const paidTracks = await this.getAllTracksWithCache();
 
     if (paidTracks.length === 0) {
-      return {
+      const emptyRes: FingerprintMatchResult = {
         isCopyrighted: false,
         isAuthorized: true,
         rightsStatus: 'ORIGINAL_SOUND',
         tokensRequired: 0,
         message: 'Son original autorisé (catalogue vide)',
       };
+      try { await this.redis.setex(cacheKey, 600, JSON.stringify(emptyRes)); } catch {}
+      return emptyRes;
     }
 
     // ── COUCHE 2 : Correspondance textuelle (métadonnées) ───────────────────
@@ -680,120 +710,130 @@ export class AudioFingerprintService {
       if (textMatch && textMatch.score >= TEXT_MATCH_THRESHOLD) {
         const result = await this.verifyRightsForTrack(userId, textMatch.track);
         if (!result.isAuthorized) {
-          return {
+          const deniedRes = {
             ...result,
             similarityScore: textMatch.score,
-            detectionMethod: 'METADATA',
-            message: result.isAuthorized
-              ? `Titre reconnu : "${textMatch.track.title}" (${result.message})`
-              : `Droits d'auteur détectés : "${textMatch.track.title}" de ${textMatch.track.artist.stageName}. ${result.message}`,
+            detectionMethod: 'METADATA' as const,
+            message: `Droits d'auteur détectés : "${textMatch.track.title}" de ${textMatch.track.artist.stageName}. ${result.message}`,
           };
+          try { await this.redis.setex(cacheKey, 600, JSON.stringify(deniedRes)); } catch {}
+          return deniedRes;
         }
-        // Si autorisé, retourner le résultat mais continuer les vérifications acoustiques
-        return { ...result, similarityScore: textMatch.score, detectionMethod: 'METADATA' };
+        const textResult = { ...result, similarityScore: textMatch.score, detectionMethod: 'METADATA' as const };
+        try { await this.redis.setex(cacheKey, 600, JSON.stringify(textResult)); } catch {}
+        return textResult;
       }
     }
 
-    // ── COUCHES 3-5 : Analyse audio réelle (si un fichier vidéo est disponible) ──
-    const s3Key = videoS3Key || (videoUrl ? this.extractS3KeyFromUrl(videoUrl) : null);
-
-    if (s3Key) {
-      const audioResult = await this.performAudioAnalysis(s3Key, paidTracks, userId);
+    // ── COUCHES 3-5 : Analyse audio réelle ultra-rapide (streaming FFmpeg) ──
+    if (s3Key || videoUrl) {
+      const audioResult = await this.performAudioAnalysis(s3Key, paidTracks, userId, videoUrl);
       if (audioResult) {
+        try { await this.redis.setex(cacheKey, 600, JSON.stringify(audioResult)); } catch {}
         return audioResult;
       }
     }
 
     // ── Aucune correspondance trouvée → Son original autorisé ────────────────
-    return {
+    const finalResult: FingerprintMatchResult = {
       isCopyrighted: false,
       isAuthorized: true,
       rightsStatus: 'ORIGINAL_SOUND',
       tokensRequired: 0,
-      detectionMethod: s3Key ? 'CHROMAPRINT' : 'METADATA',
-      // ✅ CORRECTION BUG 2 : Message honnête — ne pas dire "vérifiée 100%" si aucun match n'a été trouvé
-      message: s3Key
+      detectionMethod: (s3Key || videoUrl) ? 'CHROMAPRINT' : 'METADATA',
+      message: (s3Key || videoUrl)
         ? 'Aucune musique protégée détectée — son original autorisé'
         : 'Son original ou non répertorié autorisé',
     };
+    try { await this.redis.setex(cacheKey, 600, JSON.stringify(finalResult)); } catch {}
+    return finalResult;
   }
 
   /**
-   * Analyse audio en profondeur : extraction du son de la vidéo, Chromaprint, API externe.
-   * Exécuté dans un répertoire temporaire avec nettoyage automatique.
+   * Analyse audio ultra-rapide : extraction directe en streaming sans télécharger toute la vidéo.
    */
   private async performAudioAnalysis(
-    videoS3Key: string,
+    videoS3Key: string | null,
     paidTracks: TrackWithArtist[],
-    userId: string
+    userId: string,
+    providedVideoUrl?: string
   ): Promise<FingerprintMatchResult | null> {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kephale-fp-'));
 
     try {
-      // 1. Télécharger la vidéo depuis S3
-      console.log(`[AudioFingerprint] Downloading video from S3: ${videoS3Key}`);
-      const videoFilePath = await this.downloadFromS3(videoS3Key, tmpDir);
+      const bucketName = this.getBucketName();
+      const cleanKey = videoS3Key
+        ? (videoS3Key.startsWith(`${bucketName}/`) ? videoS3Key.replace(`${bucketName}/`, '') : videoS3Key)
+        : null;
 
-      // 2. Extraire le segment audio (offset 0s)
-      console.log('[AudioFingerprint] Extracting audio segment...');
-      const audioSegmentPath = await this.extractAudioSegment(videoFilePath, tmpDir, 0, AUDIO_SEGMENT_DURATION);
+      const publicBase =
+        this.configService.get<string>('S3_BUCKET_PUBLIC_URL') ||
+        process.env.S3_BUCKET_PUBLIC_URL ||
+        `https://aojtioctjqarqjifgnmn.supabase.co/storage/v1/object/public/${bucketName}`;
 
-      // 3. Générer le fingerprint Chromaprint de la vidéo
-      console.log('[AudioFingerprint] Generating Chromaprint fingerprint...');
-      const videoFP = await this.generateChromaprintFingerprint(audioSegmentPath);
+      const targetUrl = providedVideoUrl || (cleanKey ? `${publicBase}/${cleanKey}` : null);
+      let audioSegmentPath: string | null = null;
 
-      // ── COUCHE 3 : Comparaison Chromaprint avec le catalogue (recherche du meilleur match) ──
-      const tracksWithFingerprints = paidTracks.filter(t => t.fingerprint && t.fingerprint.length > 10);
-
-      let bestMatchTrack: TrackWithArtist | null = null;
-      let maxSimilarity = 0;
-
-      for (const track of tracksWithFingerprints) {
-        const similarity = this.compareFingerprints(videoFP.fingerprint, track.fingerprint!);
-        if (similarity > maxSimilarity) {
-          maxSimilarity = similarity;
-          bestMatchTrack = track;
-        }
-      }
-
-      // Si le meilleur score est légèrement sous le seuil, tenter un 2nd segment à +5s (en cas d'intro parlée/silence)
-      if (maxSimilarity < 5000) {
+      // 1. Tenter l'extraction audio directe en streaming via URL HTTP (extrêmement rapide < 1.5s)
+      if (targetUrl) {
         try {
-          const audioSegmentPathOffset = await this.extractAudioSegment(videoFilePath, tmpDir, 5, AUDIO_SEGMENT_DURATION);
-          const videoFPOffset = await this.generateChromaprintFingerprint(audioSegmentPathOffset);
-          for (const track of tracksWithFingerprints) {
-            const similarity = this.compareFingerprints(videoFPOffset.fingerprint, track.fingerprint!);
-            if (similarity > maxSimilarity) {
-              maxSimilarity = similarity;
-              bestMatchTrack = track;
-            }
-          }
-        } catch {
-          // Ignorer l'erreur offset
+          console.log(`[AudioFingerprint] Streaming audio extraction directly from: ${targetUrl}`);
+          audioSegmentPath = await this.extractAudioSegment(targetUrl, tmpDir, 0, AUDIO_SEGMENT_DURATION);
+        } catch (streamErr: any) {
+          console.warn('[AudioFingerprint] Streaming extraction fallback:', streamErr.message);
         }
       }
 
-      if (bestMatchTrack && maxSimilarity >= 5000) {
-        console.log(`[AudioFingerprint] Best Chromaprint match! Track "${bestMatchTrack.title}" score=${maxSimilarity}`);
-
-        const result = await this.verifyRightsForTrack(userId, bestMatchTrack);
-        return {
-          ...result,
-          similarityScore: maxSimilarity,
-          detectionMethod: 'CHROMAPRINT',
-          message: result.isAuthorized
-            ? `Titre reconnu par empreinte acoustique : "${bestMatchTrack.title}" (${result.message})`
-            : `Musique protégée détectée par analyse acoustique : "${bestMatchTrack.title}" de ${bestMatchTrack.artist.stageName}. ${result.message}`,
-        };
+      // 2. Si l'extraction par URL échoue, télécharger localement
+      if (!audioSegmentPath && cleanKey) {
+        console.log(`[AudioFingerprint] Downloading fallback video from S3: ${cleanKey}`);
+        const videoFilePath = await this.downloadFromS3(cleanKey, tmpDir);
+        audioSegmentPath = await this.extractAudioSegment(videoFilePath, tmpDir, 0, AUDIO_SEGMENT_DURATION);
       }
 
-      // ── COUCHE 4 : API ACRCloud ────────────────────────────────────────────
+      if (!audioSegmentPath) return null;
+
+      // 3. Générer le fingerprint C++
+      let videoFP = null;
+      try {
+        videoFP = await this.generateChromaprintFingerprint(audioSegmentPath);
+      } catch (err: any) {
+        console.warn('[AudioFingerprint] Fingerprint generation skipped:', err.message);
+      }
+
+      // ── COUCHE 3 : Comparaison Chromaprint avec le catalogue ──
+      if (videoFP && videoFP.fingerprint) {
+        const tracksWithFingerprints = paidTracks.filter(t => t.fingerprint && t.fingerprint.length > 10);
+        let bestMatchTrack: TrackWithArtist | null = null;
+        let maxSimilarity = 0;
+
+        for (const track of tracksWithFingerprints) {
+          const similarity = this.compareFingerprints(videoFP.fingerprint, track.fingerprint!);
+          if (similarity > maxSimilarity) {
+            maxSimilarity = similarity;
+            bestMatchTrack = track;
+          }
+        }
+
+        if (bestMatchTrack && maxSimilarity >= 5000) {
+          console.log(`[AudioFingerprint] Best Chromaprint match! Track "${bestMatchTrack.title}" score=${maxSimilarity}`);
+          const result = await this.verifyRightsForTrack(userId, bestMatchTrack);
+          return {
+            ...result,
+            similarityScore: maxSimilarity,
+            detectionMethod: 'CHROMAPRINT',
+            message: result.isAuthorized
+              ? `Titre reconnu par empreinte acoustique : "${bestMatchTrack.title}" (${result.message})`
+              : `Musique protégée détectée : "${bestMatchTrack.title}" de ${bestMatchTrack.artist.stageName}. ${result.message}`,
+          };
+        }
+      }
+
+      // ── COUCHE 4 : API ACRCloud avec timeout court ──
       const acrResult = await this.queryACRCloud(audioSegmentPath);
       if (acrResult && acrResult.score >= API_MATCH_THRESHOLD) {
         const matchedTrack = this.matchAPIResultToKephaleCatalog(acrResult.title, acrResult.artist, paidTracks);
         if (matchedTrack) {
-          console.log(`[AudioFingerprint] ACRCloud match! Track "${matchedTrack.title}" via "${acrResult.title}"`);
-
           const result = await this.verifyRightsForTrack(userId, matchedTrack);
           return {
             ...result,
@@ -806,13 +846,11 @@ export class AudioFingerprintService {
         }
       }
 
-      // ── COUCHE 5 : API AudD (fallback) ─────────────────────────────────────
+      // ── COUCHE 5 : API AudD (fallback) avec timeout court ──
       const auddResult = await this.queryAudD(audioSegmentPath);
       if (auddResult && auddResult.score >= API_MATCH_THRESHOLD) {
         const matchedTrack = this.matchAPIResultToKephaleCatalog(auddResult.title, auddResult.artist, paidTracks);
         if (matchedTrack) {
-          console.log(`[AudioFingerprint] AudD match! Track "${matchedTrack.title}" via "${auddResult.title}"`);
-
           const result = await this.verifyRightsForTrack(userId, matchedTrack);
           return {
             ...result,
@@ -830,7 +868,6 @@ export class AudioFingerprintService {
       console.error('[AudioFingerprint] Audio analysis error:', error);
       return null;
     } finally {
-      // Nettoyage du répertoire temporaire
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }

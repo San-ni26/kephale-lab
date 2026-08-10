@@ -30,18 +30,28 @@ const isPrivateOrLocalHost = (host: string): boolean => {
   return false;
 };
 
+let cachedBaseApiUrl: URL | null = null;
+try {
+  cachedBaseApiUrl = new URL(getBaseApiUrl());
+} catch (e) {}
+
 export const rewriteUrl = (url: string): string => {
   if (!url || typeof url !== 'string' || !url.startsWith('http')) return url;
+  
+  // Fast path: avoid URL parsing if it doesn't contain a local network IP or localhost
+  if (!url.includes('localhost') && !url.includes('127.0.0.1') && !url.includes('192.168') && !url.includes('10.') && !url.includes('172.')) {
+    return url;
+  }
+  
   try {
     const parsedUrl = new URL(url);
-    const currentApiUrl = new URL(getBaseApiUrl());
     
-    if (isPrivateOrLocalHost(parsedUrl.hostname)) {
-      parsedUrl.hostname = currentApiUrl.hostname;
-      if (currentApiUrl.port) {
-        parsedUrl.port = currentApiUrl.port;
+    if (isPrivateOrLocalHost(parsedUrl.hostname) && cachedBaseApiUrl) {
+      parsedUrl.hostname = cachedBaseApiUrl.hostname;
+      if (cachedBaseApiUrl.port) {
+        parsedUrl.port = cachedBaseApiUrl.port;
       }
-      parsedUrl.protocol = currentApiUrl.protocol;
+      parsedUrl.protocol = cachedBaseApiUrl.protocol;
       return parsedUrl.toString();
     }
   } catch (err) {

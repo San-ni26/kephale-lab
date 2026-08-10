@@ -177,7 +177,7 @@ export class AuthService {
     }
 
     const user = await this.prisma.user.findFirst({
-      where: { email: { equals: emailLower, mode: 'insensitive' } },
+      where: { email: emailLower },
       include: { artistProfile: true, subscription: true },
     });
 

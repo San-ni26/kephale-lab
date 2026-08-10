@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { usePlayerStore } from '../../src/stores/index';
 import { tracksAPI, playlistsAPI } from '../../src/lib/api';
+import TextInputModal from '../../src/components/TextInputModal';
 
 const { width } = Dimensions.get('window');
 
@@ -13,6 +14,7 @@ export default function TrackPlayerScreen() {
   const { id } = useLocalSearchParams();
   const { currentTrack, setTrack, isPlaying, setPlaying, nextTrack, prevTrack, progress, duration } = usePlayerStore();
   const [loading, setLoading] = useState(false);
+  const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
 
   // If we open a track directly from a link or home page, we might need to load it
   useEffect(() => {
@@ -131,18 +133,7 @@ export default function TrackPlayerScreen() {
         <TouchableOpacity>
           <Ionicons name="tv-outline" size={24} color="#A0A0A0" />
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => {
-          Alert.prompt('Nouvelle Playlist', 'Nom de la playlist', async (text) => {
-            if (text) {
-              try {
-                await playlistsAPI.create(text);
-                Alert.alert('Succès', 'Playlist créée !');
-              } catch (e) {
-                Alert.alert('Erreur', 'Impossible de créer la playlist');
-              }
-            }
-          });
-        }}>
+        <TouchableOpacity onPress={() => setShowCreatePlaylist(true)}>
           <Ionicons name="add-circle-outline" size={26} color="#A0A0A0" />
         </TouchableOpacity>
         <TouchableOpacity onPress={async () => {
@@ -164,6 +155,23 @@ export default function TrackPlayerScreen() {
           <Ionicons name="list" size={24} color="#A0A0A0" />
         </TouchableOpacity>
       </View>
+
+      <TextInputModal
+        visible={showCreatePlaylist}
+        title="Nouvelle Playlist"
+        placeholder="Nom de la playlist"
+        confirmText="Créer"
+        onConfirm={async (text) => {
+          try {
+            await playlistsAPI.create(text);
+            Alert.alert('Succès', 'Playlist créée !');
+            setShowCreatePlaylist(false);
+          } catch (e) {
+            Alert.alert('Erreur', 'Impossible de créer la playlist');
+          }
+        }}
+        onCancel={() => setShowCreatePlaylist(false)}
+      />
     </LinearGradient>
   );
 }

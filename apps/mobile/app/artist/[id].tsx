@@ -41,14 +41,24 @@ export default function ArtistPublicPage() {
   const handlePlayTrack = async (track: any, allTracks: any[]) => {
     const trackWithArtist = {
       ...track,
+      coverUrl: track.coverUrl || track.album?.coverUrl || artist?.avatar || artist?.coverImage,
       artist: track.artist || { id: artist?.id, stageName: artist?.stageName, avatar: artist?.avatar },
     };
     const allTracksWithArtist = allTracks.map((t) => ({
       ...t,
+      coverUrl: t.coverUrl || t.album?.coverUrl || artist?.avatar || artist?.coverImage,
       artist: t.artist || { id: artist?.id, stageName: artist?.stageName, avatar: artist?.avatar },
     }));
 
     if (track.price > 0 && !isTrackPurchased(track.id)) {
+      if (!user) {
+        Alert.alert('Connexion requise', 'Vous devez être connecté pour écouter ou acheter ce morceau.', [
+          { text: 'Annuler', style: 'cancel' },
+          { text: 'Se connecter', onPress: () => router.push('/(auth)/welcome' as any) }
+        ]);
+        return;
+      }
+
       try {
         const streamRes = await tracksAPI.getStreamUrl(track.id);
         const streamUrl = streamRes.data?.data?.streamUrl;
@@ -119,26 +129,30 @@ export default function ArtistPublicPage() {
     queryKey: ['artist', id],
     queryFn: () => artistsAPI.getById(id!),
     enabled: !!id,
+    staleTime: 1000 * 60 * 5,
   });
 
   const { data: statsData } = useQuery({
     queryKey: ['artist-stats', id],
     queryFn: () => artistsAPI.getStats(id!),
     enabled: !!id,
+    staleTime: 1000 * 60 * 5,
   });
 
   // Tracks
-  const { data: tracksData, isLoading: tracksLoading } = useQuery({
+  const { data: tracksData, isLoading: tracksLoading, error: tracksError } = useQuery({
     queryKey: ['artist-tracks', id],
     queryFn: () => artistsAPI.getTracks(id!, { limit: 50 }),
-    enabled: !!id && tab === 'musique',
+    enabled: !!id,
+    staleTime: 1000 * 60 * 5,
   });
 
   // Albums
-  const { data: albumsData } = useQuery({
+  const { data: albumsData, error: albumsError } = useQuery({
     queryKey: ['artist-albums', id],
     queryFn: () => artistsAPI.getAlbums(id!),
-    enabled: !!id && tab === 'musique',
+    enabled: !!id,
+    staleTime: 1000 * 60 * 5,
   });
 
   // Clips
@@ -146,6 +160,7 @@ export default function ArtistPublicPage() {
     queryKey: ['artist-clips', id],
     queryFn: () => artistsAPI.getVideos(id!, { type: 'CLIP', limit: 30 }),
     enabled: !!id && tab === 'clips',
+    staleTime: 1000 * 60 * 5,
   });
 
   // Reels
@@ -153,6 +168,7 @@ export default function ArtistPublicPage() {
     queryKey: ['artist-reels', id],
     queryFn: () => artistsAPI.getVideos(id!, { type: 'SHORT', limit: 30 }),
     enabled: !!id && tab === 'reels',
+    staleTime: 1000 * 60 * 5,
   });
 
   // Fetch purchases
@@ -160,17 +176,34 @@ export default function ArtistPublicPage() {
     queryKey: ['my-purchases'],
     queryFn: async () => {
       const res = await userAPI.getPurchases();
-      return res.data.data;
+      return res.data?.data || res.data || [];
     },
     enabled: !!user,
+    staleTime: 1000 * 60 * 2,
   });
 
-  const artist = artistData?.data?.data;
-  const stats = statsData?.data?.data;
-  const tracks: Track[] = tracksData?.data?.data ?? [];
-  const albums: Album[] = albumsData?.data?.data ?? [];
-  const clips: Video[] = clipsData?.data?.data ?? [];
-  const reels: Video[] = reelsData?.data?.data ?? [];
+  const artist = artistData?.data?.data ?? artistData?.data;
+  const stats = statsData?.data?.data ?? statsData?.data;
+  const tracks: Track[] = Array.isArray(tracksData?.data?.data)
+    ? tracksData.data.data
+    : Array.isArray(tracksData?.data)
+    ? tracksData.data
+    : [];
+  const albums: Album[] = Array.isArray(albumsData?.data?.data)
+    ? albumsData.data.data
+    : Array.isArray(albumsData?.data)
+    ? albumsData.data
+    : [];
+  const clips: Video[] = Array.isArray(clipsData?.data?.data)
+    ? clipsData.data.data
+    : Array.isArray(clipsData?.data)
+    ? clipsData.data
+    : [];
+  const reels: Video[] = Array.isArray(reelsData?.data?.data)
+    ? reelsData.data.data
+    : Array.isArray(reelsData?.data)
+    ? reelsData.data
+    : [];
   const purchases = purchasesData || [];
 
   const isTrackPurchased = (trackId: string) => {
@@ -497,7 +530,7 @@ export default function ArtistPublicPage() {
                 >
                   <Text style={styles.trackIdx}>{idx + 1}</Text>
                   <Image 
-                    source={{ uri: track.coverUrl }} 
+                    source={{ uri: track.coverUrl || track.album?.coverUrl || artist?.avatar || artist?.coverImage }} 
                     style={styles.trackCover} 
                     cachePolicy="memory-disk"
                     contentFit="cover"

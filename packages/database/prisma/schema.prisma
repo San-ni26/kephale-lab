@@ -211,6 +211,11 @@ model Track {
   @@index([artistId])
   @@index([status])
   @@index([createdAt])
+  // Composite indexes for common query patterns
+  @@index([status, createdAt])       // GET /tracks?sort=newest
+  @@index([status, plays])           // GET /tracks?sort=popular
+  @@index([artistId, status])        // GET /artists/:id/tracks
+  @@index([albumId, status])         // GET /albums/:id + isSingle filter
   @@map("tracks")
 }
 
@@ -339,6 +344,9 @@ model Like {
   @@unique([userId, postId])
   @@unique([userId, trackId])
   @@unique([userId, videoId])
+  @@index([trackId])
+  @@index([videoId])
+  @@index([postId])
   @@map("likes")
 }
 

@@ -80,6 +80,8 @@ const ReelVideoPlayer = React.memo(function ReelVideoPlayer({
     };
   }, [player]);
 
+  const hasSentWatchRef = React.useRef(false);
+
   // Gérer la visibilité & lecture instantanée
   React.useEffect(() => {
     if (isActive) {
@@ -87,6 +89,7 @@ const ReelVideoPlayer = React.memo(function ReelVideoPlayer({
         setGlobalIsPlaying(false);
       }
       setIsPlaying(true);
+      hasSentWatchRef.current = false;
       try {
         player.play();
       } catch (e) {}
@@ -96,14 +99,16 @@ const ReelVideoPlayer = React.memo(function ReelVideoPlayer({
         player.pause();
       } catch (e) {}
       const time = getSafeTime();
-      if (time >= 1) {
+      if (time >= 2 && !hasSentWatchRef.current) {
+        hasSentWatchRef.current = true;
         videosAPI.watch(item.id, { watchDurationSec: time, completed: false }).catch(() => {});
       }
     }
 
     return () => {
       const time = lastTimeRef.current;
-      if (isActive && time >= 1) {
+      if (time >= 2 && !hasSentWatchRef.current) {
+        hasSentWatchRef.current = true;
         videosAPI.watch(item.id, { watchDurationSec: time, completed: false }).catch(() => {});
       }
     };
@@ -252,6 +257,32 @@ const ReelItem = React.memo(function ReelItem({
     }
   };
 
+  const isOwner = !!user && ((item as any).userId === user.id || item.artist?.id === user.artistProfile?.id || (user.artistProfile && item.artistId === user.artistProfile.id) || (user as any).role === 'ADMIN');
+
+  const deleteReelMutation = useMutation({
+    mutationFn: () => videosAPI.delete(item.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['videos'] });
+      queryClient.invalidateQueries({ queryKey: ['my-reels'] });
+      queryClient.invalidateQueries({ queryKey: ['my-videos'] });
+      Alert.alert('Succès', 'Le Reel a été supprimé.');
+    },
+    onError: (err: any) => {
+      Alert.alert('Erreur', err?.response?.data?.error?.message || 'Impossible de supprimer le Reel.');
+    },
+  });
+
+  const handleDeleteReel = () => {
+    Alert.alert(
+      'Supprimer le Reel',
+      `Voulez-vous supprimer définitivement "${item.title}" ?`,
+      [
+        { text: 'Annuler', style: 'cancel' },
+        { text: 'Supprimer', style: 'destructive', onPress: () => deleteReelMutation.mutate() },
+      ]
+    );
+  };
+
   const formatCount = (n: number) => {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
@@ -262,7 +293,7 @@ const ReelItem = React.memo(function ReelItem({
     <View style={[styles.reelContainer, { height: containerHeight }]}>
       <StatusBar style="light" />
 
-      {/* Video active or preloaded adjacent video */}
+      {/* Video active or preloaded adjacent video for instant playback */}
       {(isActive || isNearActive) && !!item.videoUrl ? (
         <ReelVideoPlayer
           item={item}
@@ -362,6 +393,14 @@ const ReelItem = React.memo(function ReelItem({
           <TouchableOpacity style={styles.actionBtn} onPress={() => downloadVideo(item)}>
             <Ionicons name="cloud-download-outline" size={24} color="#FFF" />
             <Text style={styles.actionCount}>Télécharger</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Delete option for the owner / creator of the reel */}
+        {isOwner && (
+          <TouchableOpacity style={styles.actionBtn} onPress={handleDeleteReel}>
+            <Ionicons name="trash-outline" size={24} color="#EF4444" />
+            <Text style={[styles.actionCount, { color: '#EF4444' }]}>Supprimer</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -466,6 +505,20 @@ export default function ReelsScreen() {
     }, [])
   );
 
+  const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
+    if (viewableItems && viewableItems.length > 0) {
+      const topItem = viewableItems[0];
+      if (topItem && typeof topItem.index === 'number') {
+        setActiveIndex(topItem.index);
+      }
+    }
+  }).current;
+
+  const viewabilityConfig = useRef({
+    itemVisiblePercentThreshold: 50,
+    minimumViewTime: 50,
+  }).current;
+
   const handleMomentumScrollEnd = useCallback((e: any) => {
     const offsetY = e.nativeEvent.contentOffset.y;
     const index = Math.round(offsetY / containerHeight);
@@ -552,9 +605,11 @@ export default function ReelsScreen() {
         disableIntervalMomentum={Platform.OS === 'android'}
         bounces={false}
         overScrollMode="never"
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={viewabilityConfig}
         onMomentumScrollEnd={handleMomentumScrollEnd}
-        initialNumToRender={1}
-        maxToRenderPerBatch={1}
+        initialNumToRender={2}
+        maxToRenderPerBatch={2}
         windowSize={3}
         removeClippedSubviews={Platform.OS === 'android'}
         refreshing={isRefreshing}
