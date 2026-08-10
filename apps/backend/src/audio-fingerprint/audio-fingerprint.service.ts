@@ -167,7 +167,24 @@ export class AudioFingerprintService {
     const outputPath = path.join(outputDir, 'audio_segment.wav');
 
     return new Promise<string>((resolve, reject) => {
-      let cmd = ffmpeg(inputFilePath)
+      let isSettled = false;
+      let cmd: any = null;
+
+      const timeoutId = setTimeout(() => {
+        if (!isSettled) {
+          isSettled = true;
+          try { cmd?.kill('SIGKILL'); } catch {}
+          reject(new Error('FFmpeg audio extraction timeout (5s)'));
+        }
+      }, 5000);
+
+      cmd = ffmpeg(inputFilePath)
+        .inputOptions([
+          '-timeout', '4000000',
+          '-reconnect', '1',
+          '-reconnect_streamed', '1',
+          '-reconnect_delay_max', '2',
+        ])
         .noVideo()
         .audioChannels(1)
         .audioFrequency(16000)
@@ -175,29 +192,23 @@ export class AudioFingerprintService {
         .outputFormat('wav')
         .duration(durationSec);
 
-      // Si le fichier est assez long, on skip les premières secondes (souvent silence/intro)
       if (startSec > 0) {
         cmd = cmd.seekInput(startSec);
       }
 
       cmd
         .output(outputPath)
-        .on('end', () => resolve(outputPath))
+        .on('end', () => {
+          if (!isSettled) {
+            isSettled = true;
+            clearTimeout(timeoutId);
+            resolve(outputPath);
+          }
+        })
         .on('error', (err: any) => {
-          // Si le seek dépasse la durée, réessayer depuis le début
-          if (startSec > 0) {
-            ffmpeg(inputFilePath)
-              .noVideo()
-              .audioChannels(1)
-              .audioFrequency(16000)
-              .audioCodec('pcm_s16le')
-              .outputFormat('wav')
-              .duration(durationSec)
-              .output(outputPath)
-              .on('end', () => resolve(outputPath))
-              .on('error', reject)
-              .run();
-          } else {
+          if (!isSettled) {
+            isSettled = true;
+            clearTimeout(timeoutId);
             reject(err);
           }
         })
