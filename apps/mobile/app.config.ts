@@ -12,7 +12,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   scheme: 'kephale',
   userInterfaceStyle: 'automatic',
   splash: {
-    // image: './assets/splash.png',  // Uncomment when asset exists
+    image: './assets/splash.png',
     resizeMode: 'contain',
     backgroundColor: '#0D0D0D',
   },
