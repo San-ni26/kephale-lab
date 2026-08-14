@@ -128,6 +128,15 @@ export class VideosService {
     });
   }
 
+  /**
+   * Vérification instantanée par hash de fichier.
+   * Appelé AVANT le pré-upload depuis le mobile pour une détection < 200ms.
+   */
+  async checkAudioHash(userId: string, sha256Prefix: string, filename: string, fileSize: number) {
+    return this.audioFingerprintService.checkAudioHash(userId, sha256Prefix, filename, fileSize);
+  }
+
+
   async createVideo(userId: string, data: any) {
     const artist = await this.prisma.artistProfile.findUnique({ where: { userId } });
     
@@ -202,12 +211,19 @@ export class VideosService {
       },
     });
 
-    await this.mediaQueue.add('transcode-video', { type: 'TRANSCODE_VIDEO', payload: { videoId: video.id } });
-    
+    // Transcodage 720p CRF 26 en arrière-plan (délai 30s pour que S3 indexe l'original)
+    if (data.type === 'SHORT') {
+      await this.mediaQueue.add('transcode-video', {
+        type: 'TRANSCODE_VIDEO',
+        payload: { videoId: video.id },
+      }, { delay: 30_000, attempts: 2, backoff: { type: 'fixed', delay: 60_000 } });
+    }
+
     await this.mediaQueue.add('verify-video-audio', {
       type: 'VERIFY_VIDEO_AUDIO',
       payload: { videoId: video.id },
     }, { delay: 5000 });
+
 
     // Invalidation immédiate du cache vidéo pour affichage instantané
     try {

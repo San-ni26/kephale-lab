@@ -3,6 +3,8 @@ import { PrismaClient } from '@prisma/client';
 import { AccessControlService } from '../subscriptions/access.service';
 import { CurrencyService } from './currency.service';
 import Stripe from 'stripe';
+import { Redis } from 'ioredis';
+import { REDIS_CLIENT } from '../redis/redis.constants';
 
 @Injectable()
 export class PaymentsService {
@@ -12,6 +14,7 @@ export class PaymentsService {
     private readonly prisma: PrismaClient,
     private readonly accessControlService: AccessControlService,
     private readonly currencyService: CurrencyService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
   private getStripe(): Stripe {
@@ -156,7 +159,8 @@ export class PaymentsService {
       };
     }
 
-    if (process.env.NODE_ENV !== 'production') {
+    const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+    if (!isProd) {
       const result = await this.prisma.$transaction(async (tx) => {
         const updatedUser = await tx.user.update({
           where: { id: userId },
@@ -567,6 +571,11 @@ export class PaymentsService {
     } catch {
       throw new BadRequestException('Webhook signature verification failed');
     }
+
+    const redisKey = `webhook:stripe:${event.id}`;
+    const isProcessed = await this.redis.setnx(redisKey, '1');
+    if (!isProcessed) return;
+    await this.redis.expire(redisKey, 86400);
 
     switch (event.type) {
       case 'payment_intent.succeeded': {

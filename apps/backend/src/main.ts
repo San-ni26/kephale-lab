@@ -1,3 +1,8 @@
+// ── Sentry — Initialiser EN PREMIER pour capturer les erreurs de démarrage ──
+// Doit être en tête de fichier, avant tout autre import NestJS
+import { initSentryBackend } from './common/sentry';
+initSentryBackend();
+
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
@@ -22,8 +27,16 @@ async function bootstrap() {
         directives: {
           defaultSrc: ["'self'"],
           imgSrc: ["'self'", 'data:', 'https://*.supabase.co', 'https://lh3.googleusercontent.com'],
-          mediaSrc: ["'self'", 'https://*.supabase.co'],
-          connectSrc: ["'self'"],
+          mediaSrc: ["'self'", 'https://*.supabase.co', 'https://cdn.kephale.app'],
+          // connectSrc : autoriser les domaines réels utilisés par l'app
+          connectSrc: [
+            "'self'",
+            'https://*.supabase.co',   // Supabase Storage + Auth
+            'https://cdn.kephale.app', // CDN vidéo/audio
+            'wss://*.livekit.cloud',   // LiveKit WebSocket (lives)
+            'https://identify-eu-west-1.acrcloud.com', // ACRCloud fingerprint
+            'https://identifier-eu-west-1.acrcloud.com',
+          ],
         },
       },
     })

@@ -8,7 +8,6 @@ import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import GlobalAudioPlayer from '../../src/components/GlobalAudioPlayer';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { VideoThumbnail } from '../../src/components/VideoThumbnail';
@@ -583,7 +582,7 @@ export default function ClipScreen() {
           <View style={{ height: 40 }} />
         </ScrollView>
 
-        <View style={styles.commentFixedBottom}>
+        <View style={[styles.commentFixedBottom, { paddingBottom: Math.max(insets.bottom, 12) }]}>
           <TextInput
             style={styles.commentFixedInput}
             placeholder="Ajouter un commentaire..."

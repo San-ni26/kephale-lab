@@ -126,11 +126,12 @@ export default function HomeScreen() {
   };
 
   // 1. Tracks (Music mode)
-  const { data: tracksData, isLoading: isLoadingTracks } = useQuery({
+  const { data: tracksData, isLoading: isLoadingTracks, isError: isErrorTracks } = useQuery({
     queryKey: ['tracks', 'latest', { isSingle: true, search: searchQuery, genre: selectedGenre }],
     queryFn: () => tracksAPI.list({ sort: 'newest', limit: 10, isSingle: true, search: searchQuery || undefined, genre: selectedGenre || undefined }),
     enabled: mode === 'musique',
     staleTime: 1000 * 60 * 5,
+    retry: 1, // Évite les boucles de retry infinies si le backend est injoignable
   });
 
   // 2. Artists (Music mode)
@@ -155,6 +156,7 @@ export default function HomeScreen() {
     queryFn: () => livesAPI.list({ search: searchQuery || undefined }),
     enabled: mode === 'live' || mode === 'musique',
     staleTime: 1000 * 60 * 2,
+    retry: 1,
   });
 
   // 5. Clips (Clips mode or overview)
@@ -163,6 +165,7 @@ export default function HomeScreen() {
     queryFn: () => videosAPI.list({ type: 'CLIP', limit: 20, search: searchQuery || undefined }),
     enabled: mode === 'clips' || mode === 'musique',
     staleTime: 1000 * 60 * 5,
+    retry: 1,
   });
 
   const { data: purchasesData } = useQuery({
@@ -193,10 +196,18 @@ export default function HomeScreen() {
   const purchases = purchasesData || [];
   const purchasedTrackIds = useMemo(() => new Set(purchases.filter((p: any) => p.trackId).map((p: any) => p.trackId)), [purchases]);
 
-  const isInitialMusicLoading = mode === 'musique' && isLoadingTracks && tracks.length === 0 && artists.length === 0 && homeAlbums.length === 0;
+  // ── Guard: éviter le chargement infini après déconnexion ─────────────────────
+  // Si l'utilisateur vient de se déconnecter (isAuthenticated = false),
+  // les queries continuent à s'exécuter et échouent avec 401, ce qui
+  // laisse isLoading = true indéfiniment. On force isLoading = false
+  // dès que isAuthenticated est false (la redirection est gérée par _layout).
+  const isInitialMusicLoading = mode === 'musique'
+    && isLoadingTracks && !isErrorTracks
+    && tracks.length === 0 && artists.length === 0 && homeAlbums.length === 0;
   const isInitialClipsLoading = mode === 'clips' && isLoadingClips && clips.length === 0;
   const isInitialLivesLoading = mode === 'live' && isLoadingLives && lives.length === 0;
-  const isInitialLoading = isInitialMusicLoading || isInitialClipsLoading || isInitialLivesLoading;
+  // Ne jamais bloquer l'écran sur un chargement si l'utilisateur n'est pas connecté
+  const isInitialLoading = isAuthenticated && (isInitialMusicLoading || isInitialClipsLoading || isInitialLivesLoading);
 
   const unreadCount = notificationsData ? notificationsData.filter((n: any) => !n.isRead).length : 0;
 

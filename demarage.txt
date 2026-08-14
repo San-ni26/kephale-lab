@@ -102,7 +102,7 @@ npm run start:dev # ou npm run start
 # ÉTAPE 6 : Lancer l'app mobile (Terminal 2)
 # ───────────────────────────────────────────────────────────────
 cd apps/mobile
-npm run dev 
+npm run dev
 
 # Remarque : Détecte aussi l'IP locale automatiquement.
 # → Scanner le QR code avec l'app Expo Go sur ton téléphone

@@ -6,6 +6,11 @@ dist
 .env
 .env.local
 .env.*.local
+# Explicit backend env protection (production secrets)
+apps/backend/.env
+apps/backend/.env.*
+apps/mobile/.env
+apps/mobile/.env.*
 *.tsbuildinfo
 .DS_Store
 coverage

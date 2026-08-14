@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, router } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { albumsAPI, tracksAPI, purchasesAPI, userAPI } from '../../src/lib/api';
@@ -18,10 +18,13 @@ const AnimatedImage = Animated.createAnimatedComponent(Image);
 export default function PublicAlbumScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
+  const queryClient = useQueryClient();
   const { isAuthenticated, user, checkAuth } = useAuthStore();
   const { setTrack, currentTrack, isPlaying, setPlaying, nextTrack, prevTrack } = usePlayerStore();
   const [isProcessingPayment, setIsProcessingPayment] = useState<string | null>(null);
   const [isProcessingAlbumPayment, setIsProcessingAlbumPayment] = useState(false);
+  const [localPurchasedTrackIds, setLocalPurchasedTrackIds] = useState<Set<string>>(new Set());
+  const [localIsAlbumPurchased, setLocalIsAlbumPurchased] = useState(false);
   const [paymentModalData, setPaymentModalData] = useState<{ type: 'TRACK' | 'ALBUM'; id: string; price: number; currency: string } | null>(null);
   const { downloads, downloading, downloadTrack, removeDownload } = useOfflineStore();
 
@@ -72,25 +75,38 @@ export default function PublicAlbumScreen() {
   });
 
   const purchases = purchasesData || [];
-  const purchasedTrackIds = useMemo(() => new Set(purchases.filter((p: any) => p.trackId).map((p: any) => p.trackId)), [purchases]);
-  const isAlbumPurchased = useMemo(() => purchases.some((p: any) => p.albumId === id), [purchases, id]);
+  const purchasedTrackIds = useMemo(() => {
+    const set = new Set(purchases.filter((p: any) => p.trackId).map((p: any) => p.trackId));
+    localPurchasedTrackIds.forEach((tId) => set.add(tId));
+    return set;
+  }, [purchases, localPurchasedTrackIds]);
+
+  const isAlbumPurchased = useMemo(
+    () => localIsAlbumPurchased || purchases.some((p: any) => p.albumId === id),
+    [purchases, id, localIsAlbumPurchased]
+  );
   const isPurchased = Boolean(album?.isPurchased || isAlbumPurchased);
 
   const handlePlayTrack = async (track: Track, allTracks: Track[]) => {
-    const trackWithAlbumAndArtist = {
-      ...track,
-      coverUrl: track.coverUrl || album?.coverUrl,
-      artist: track.artist || { id: album?.artist?.id || album?.artistId, stageName: album?.artist?.stageName, avatar: album?.artist?.avatar },
-    };
-    const allTracksWithData = allTracks.map((t) => ({
+    const enrichTrack = (t: Track) => ({
       ...t,
       coverUrl: t.coverUrl || album?.coverUrl,
       artist: t.artist || { id: album?.artist?.id || album?.artistId, stageName: album?.artist?.stageName, avatar: album?.artist?.avatar },
-    }));
+    });
 
-    const isUnlocked = track.price === 0 || (album && album.price === 0) || isAlbumPurchased || purchasedTrackIds.has(track.id);
-    if (isUnlocked) {
-      setTrack(trackWithAlbumAndArtist as any, allTracksWithData as any);
+    const trackWithAlbumAndArtist = enrichTrack(track);
+
+    // Build a queue of ONLY unlocked tracks so next/prev cannot reach locked content
+    const isTrackUnlocked = (t: Track) =>
+      t.price === 0 || (album?.price === 0) || isAlbumPurchased ||
+      purchasedTrackIds.has(t.id) || localPurchasedTrackIds.has(t.id);
+
+    const unlockedQueue = allTracks.filter(isTrackUnlocked).map(enrichTrack);
+
+    const isCurrentTrackUnlocked = isTrackUnlocked(track);
+
+    if (isCurrentTrackUnlocked) {
+      setTrack(trackWithAlbumAndArtist as any, unlockedQueue as any);
       return;
     }
 
@@ -109,7 +125,7 @@ export default function PublicAlbumScreen() {
         ...trackWithAlbumAndArtist,
         ...(streamUrl ? { audioUrl: streamUrl } : {}),
       };
-      setTrack(playableTrack as any, allTracksWithData as any);
+      setTrack(playableTrack as any, unlockedQueue as any);
     } catch (err: any) {
       if (err.response?.status === 401) {
         Alert.alert('Connexion requise', 'Vous devez être connecté pour écouter ou acheter ce morceau.', [
@@ -165,11 +181,32 @@ export default function PublicAlbumScreen() {
     try {
       const res = await purchasesAPI.payWithTokens({ type, itemId: id });
       if (res.data?.success) {
-        Alert.alert('Succès', 'Achat réussi !');
-        checkAuth();
+        Alert.alert('Succès', 'Achat réussi ! Vous avez désormais accès à ce contenu.');
+
+        // Instant local optimistic update (shows [✓ Acheté] with 0ms latency)
+        if (type === 'TRACK') {
+          setLocalPurchasedTrackIds((prev) => new Set(prev).add(id));
+        } else if (type === 'ALBUM') {
+          setLocalIsAlbumPurchased(true);
+        }
+
+        // Invalidate backend React Query cache
+        queryClient.invalidateQueries({ queryKey: ['my-purchases'] });
+        queryClient.invalidateQueries({ queryKey: ['album', id] });
+
+        // Update token balance
+        if (res.data?.data?.newBalance !== undefined) {
+          useAuthStore.getState().updateUser({ tokenBalance: res.data.data.newBalance });
+        } else {
+          checkAuth().catch(() => {});
+        }
+
+        // Auto-play the bought track
         if (type === 'TRACK' && album?.tracks) {
-          const boughtTrack = album.tracks.find(t => t.id === id);
-          if (boughtTrack) setTrack(boughtTrack, album.tracks);
+          const boughtTrack = album.tracks.find((t) => t.id === id);
+          if (boughtTrack) {
+            handlePlayTrack(boughtTrack, album.tracks);
+          }
         }
       }
     } catch (e: any) {

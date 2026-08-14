@@ -2,15 +2,17 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { AudioFingerprintService } from '../audio-fingerprint/audio-fingerprint.service';
+import { VideoTranscodeService } from './video-transcode.service';
 
 /**
  * Worker BullMQ pour le traitement asynchrone des médias.
- * 
+ *
  * Jobs traités :
  * - GENERATE_TRACK_FINGERPRINT : Génère et sauvegarde l'empreinte Chromaprint
  *   d'une track après son upload par un artiste.
- * - TRANSCODE_AUDIO            : Transcodage audio (placeholder).
- * - TRANSCODE_VIDEO            : Transcodage vidéo (placeholder).
+ * - TRANSCODE_VIDEO            : Compresse le Reel en 720p CRF 26 (~2 Mbps)
+ *   pour réduire la consommation de données mobiles (-65 à -82%).
+ * - TRANSCODE_AUDIO            : Transcodage audio (placeholder futur).
  * - VERIFY_VIDEO_AUDIO         : Vérification post-upload des droits audio.
  */
 @Injectable()
@@ -22,6 +24,7 @@ export class MediaProcessingWorker extends WorkerHost {
 
   constructor(
     private readonly audioFingerprintService: AudioFingerprintService,
+    private readonly videoTranscodeService: VideoTranscodeService,
   ) {
     super();
   }
@@ -35,15 +38,14 @@ export class MediaProcessingWorker extends WorkerHost {
       case 'GENERATE_TRACK_FINGERPRINT':
         return this.handleGenerateTrackFingerprint(payload);
 
+      case 'TRANSCODE_VIDEO':
+        return this.handleTranscodeVideo(payload);
+
       case 'VERIFY_VIDEO_AUDIO':
         return this.handleVerifyVideoAudio(payload);
 
       case 'TRANSCODE_AUDIO':
         this.logger.log(`[MediaWorker] TRANSCODE_AUDIO non implémenté (track ${payload?.trackId}), skip.`);
-        return { skipped: true };
-
-      case 'TRANSCODE_VIDEO':
-        this.logger.log(`[MediaWorker] TRANSCODE_VIDEO non implémenté (video ${payload?.videoId}), skip.`);
         return { skipped: true };
 
       default:
@@ -73,6 +75,38 @@ export class MediaProcessingWorker extends WorkerHost {
     } catch (error: any) {
       this.logger.error(`[MediaWorker] ❌ Échec empreinte track ${trackId}: ${error.message}`);
       throw error; // BullMQ retentera le job selon la config retry
+    }
+  }
+
+  /**
+   * Transcoode une vidéo Reel en 720p CRF 26 pour réduire la consommation mobile.
+   * Le job est ajouté avec un délai de 30s après la publication pour laisser
+   * le temps à S3 de rendre le fichier disponible.
+   */
+  private async handleTranscodeVideo(payload: { videoId: string }) {
+    const { videoId } = payload;
+
+    if (!videoId) {
+      this.logger.error('[MediaWorker] TRANSCODE_VIDEO: videoId manquant');
+      return { error: 'videoId missing' };
+    }
+
+    this.logger.log(`[MediaWorker] Transcodage vidéo 720p CRF 26: ${videoId}`);
+
+    try {
+      const result = await this.videoTranscodeService.transcodeVideoById(videoId);
+      if (result.success) {
+        this.logger.log(
+          `[MediaWorker] ✅ Transcodage terminé pour vidéo ${videoId}: ` +
+          `-${result.compressionRatio}% (${((result.originalSize || 0) / (1024 * 1024)).toFixed(1)}MB → ` +
+          `${((result.compressedSize || 0) / (1024 * 1024)).toFixed(1)}MB)`
+        );
+      }
+      return result;
+    } catch (error: any) {
+      this.logger.error(`[MediaWorker] ❌ Échec transcodage vidéo ${videoId}: ${error.message}`);
+      // Ne pas re-throw : la vidéo originale reste disponible, ce n'est pas critique
+      return { success: false, error: error.message };
     }
   }
 

@@ -324,6 +324,15 @@ export default function WelcomeScreen() {
                 secureTextEntry
               />
 
+              {isLogin && (
+                <TouchableOpacity
+                  style={styles.forgotPasswordBtn}
+                  onPress={() => router.push('/(auth)/forgot-password')}
+                >
+                  <Text style={styles.forgotPasswordText}>Mot de passe oublié ?</Text>
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity style={styles.primaryBtn} onPress={handleLocalAuth} disabled={loading}>
                 {loading ? (
                   <ActivityIndicator color="#FFFFFF" />
@@ -445,6 +454,8 @@ const styles = StyleSheet.create({
   },
 
   formContainer: { gap: 16, marginBottom: 30 },
+  forgotPasswordBtn: { alignSelf: 'flex-end', marginTop: -8, marginBottom: 8 },
+  forgotPasswordText: { color: '#FF5A00', fontSize: 13, fontWeight: '500' },
   toggleContainer: {
     flexDirection: 'row',
     backgroundColor: '#1A1A1A',

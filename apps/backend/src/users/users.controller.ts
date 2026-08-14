@@ -1,4 +1,4 @@
-import { Controller, Get, Put, Delete, Post, Body, Req, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Put, Delete, Post, Patch, Body, Req, UseGuards, Query } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { AuthGuard } from '../auth/auth.guard';
 import type { Request } from 'express';
@@ -9,6 +9,13 @@ const UpdateProfileSchema = z.object({
   name: z.string().min(2).optional(),
   avatar: z.string().url().optional(),
   phoneNumber: z.string().optional(),
+});
+
+const UpdatePushTokenSchema = z.object({
+  token: z.string().min(1).optional(),
+  pushToken: z.string().min(1).optional(),
+}).refine(data => Boolean(data.token || data.pushToken), {
+  message: 'Token is required',
 });
 
 const DeleteAccountSchema = z.object({
@@ -39,6 +46,18 @@ export class UsersController {
       throw new BadRequestException({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid data' } });
     }
     const data = await this.usersService.updateMe(req.user!.userId, parsed.data);
+    return { success: true, data };
+  }
+
+  @Patch('me/push-token')
+  @UseGuards(AuthGuard)
+  async updatePushToken(@Req() req: Request, @Body() body: any) {
+    const parsed = UpdatePushTokenSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Token is required' } });
+    }
+    const token = parsed.data.token || parsed.data.pushToken!;
+    const data = await this.usersService.updatePushToken(req.user!.userId, token);
     return { success: true, data };
   }
 

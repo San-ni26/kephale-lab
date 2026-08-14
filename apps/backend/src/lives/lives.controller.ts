@@ -17,10 +17,6 @@ const CreateLiveSchema = z.object({
   duration: z.number().min(5).max(480).optional(),
 });
 
-const GiftLiveSchema = z.object({
-  tokens: z.number().min(1),
-  message: z.string().max(200).optional(),
-});
 
 @Controller('lives')
 export class LivesController {
@@ -73,26 +69,6 @@ export class LivesController {
   async likeLive(@Param('id') id: string) {
     const data = await this.livesService.likeLive(id);
     return { success: true, data };
-  }
-
-  @Post(':id/gift')
-  @UseGuards(AuthGuard)
-  async giftLive(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
-    const parsed = GiftLiveSchema.safeParse(body);
-    if (!parsed.success) {
-      throw new BadRequestException({ success: false, error: { message: 'Données de don invalides' } });
-    }
-
-    const data = await this.livesService.giftLive(
-      req.user!.userId,
-      id,
-      parsed.data.tokens,
-      parsed.data.message
-    );
-    return {
-      success: true,
-      data,
-    };
   }
 
   @Post(':id/report')

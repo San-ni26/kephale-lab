@@ -52,10 +52,11 @@ if (!audiomatcher) {
 // ── Configuration ───────────────────────────────────────────────────────────────
 
 const CHROMAPRINT_THRESHOLD = 0.75; // Seuil de similarité Chromaprint (base aléatoire = ~0.50, vrai match = >0.85)
-const API_MATCH_THRESHOLD = 0.90;   // Seuil pour les API externes (ACRCloud/AudD)
+const API_MATCH_THRESHOLD = 0.90;   // Seuil pour les API externes (AudD/ACRCloud)
 const TEXT_MATCH_THRESHOLD = 0.80;   // Seuil pour la correspondance textuelle
-const CATALOG_CACHE_TTL = 3600;     // 1h de cache Redis pour le catalogue (rafraîchi plus souvent)
-const AUDIO_SEGMENT_DURATION = 20;   // Durée du segment audio à analyser (secondes)
+const CATALOG_CACHE_TTL = 3600;     // 1h de cache Redis pour le catalogue
+const HASH_CACHE_TTL = 86400;        // 24h de cache Redis pour les hash de fichiers connus
+const AUDIO_SEGMENT_DURATION = 12;   // 12s suffisent pour AudD/ACRCloud (doc officielle)
 
 // ── Types ───────────────────────────────────────────────────────────────────────
 
@@ -489,6 +490,59 @@ export class AudioFingerprintService {
     return null;
   }
 
+  /**
+   * Orchestre la reconnaissance musicale externe.
+   * Lance AudD (principal) et ACRCloud (si configuré) en parallèle avec Promise.race().
+   * Retourne le premier résultat positif suffisamment confiant.
+   *
+   * Protège contre :
+   *   - Les musiques du catalogue Kephale (via matchAPIResultToKephaleCatalog)
+   *   - Les musiques externes (Spotify, YouTube, Apple Music, etc.) → blocage systématique
+   */
+  private async queryExternalMusicAPIs(audioFilePath: string): Promise<{
+    title: string;
+    artist: string;
+    score: number;
+    method: 'AUDD' | 'ACRCLOUD';
+  } | null> {
+    const promises: Promise<{ title: string; artist: string; score: number; method: 'AUDD' | 'ACRCLOUD' } | null>[] = [];
+
+    // AudD — toujours lancé en premier (clé configurée en priorité)
+    const auddKey = process.env.AUDD_API_KEY;
+    if (auddKey) {
+      promises.push(
+        this.queryAudD(audioFilePath).then(r => r ? { ...r, method: 'AUDD' as const } : null)
+      );
+    }
+
+    // ACRCloud — lancé en parallèle si configuré
+    const acrKey = process.env.ACRCLOUD_ACCESS_KEY;
+    const acrSecret = process.env.ACRCLOUD_ACCESS_SECRET;
+    const acrHost = process.env.ACRCLOUD_HOST;
+    if (acrKey && acrSecret && acrHost) {
+      promises.push(
+        this.queryACRCloud(audioFilePath).then(r => r ? { ...r, method: 'ACRCLOUD' as const } : null)
+      );
+    }
+
+    if (promises.length === 0) return null;
+
+    // Race : prendre le premier résultat positif suffisamment confiant
+    try {
+      const results = await Promise.allSettled(promises);
+      for (const res of results) {
+        if (res.status === 'fulfilled' && res.value && res.value.score >= API_MATCH_THRESHOLD) {
+          return res.value;
+        }
+      }
+    } catch {
+      // Ignore
+    }
+
+    return null;
+  }
+
+
   // ═══════════════════════════════════════════════════════════════════════════════
   // COUCHE 3 — Correspondance textuelle améliorée (métadonnées)
   // ═══════════════════════════════════════════════════════════════════════════════
@@ -840,38 +894,40 @@ export class AudioFingerprintService {
         }
       }
 
-      // ── COUCHE 4 : API ACRCloud avec timeout court ──
-      const acrResult = await this.queryACRCloud(audioSegmentPath);
-      if (acrResult && acrResult.score >= API_MATCH_THRESHOLD) {
-        const matchedTrack = this.matchAPIResultToKephaleCatalog(acrResult.title, acrResult.artist, paidTracks);
-        if (matchedTrack) {
-          const result = await this.verifyRightsForTrack(userId, matchedTrack);
+      // ── COUCHE 4 : API externe de reconnaissance musicale (AudD + ACRCloud en parallèle) ──
+      // AudD : détecte les musiques du catalogue Kephale ET les musiques externes (Spotify, YouTube, etc.)
+      const externalApiResult = await this.queryExternalMusicAPIs(audioSegmentPath);
+      if (externalApiResult && externalApiResult.score >= API_MATCH_THRESHOLD) {
+        // Tenter d'abord de matcher avec le catalogue Kephale
+        const matchedKephaleTrack = this.matchAPIResultToKephaleCatalog(
+          externalApiResult.title,
+          externalApiResult.artist,
+          paidTracks
+        );
+        if (matchedKephaleTrack) {
+          const result = await this.verifyRightsForTrack(userId, matchedKephaleTrack);
           return {
             ...result,
-            similarityScore: acrResult.score,
-            detectionMethod: 'ACRCLOUD',
+            similarityScore: externalApiResult.score,
+            detectionMethod: externalApiResult.method as any,
             message: result.isAuthorized
-              ? `Titre reconnu par ACRCloud : "${matchedTrack.title}" (${result.message})`
-              : `Musique protégée détectée (ACRCloud) : "${matchedTrack.title}" de ${matchedTrack.artist.stageName}. ${result.message}`,
+              ? `Titre reconnu : "${matchedKephaleTrack.title}" (${result.message})`
+              : `Musique protégée détectée : "${matchedKephaleTrack.title}" de ${matchedKephaleTrack.artist.stageName}. ${result.message}`,
           };
         }
-      }
 
-      // ── COUCHE 5 : API AudD (fallback) avec timeout court ──
-      const auddResult = await this.queryAudD(audioSegmentPath);
-      if (auddResult && auddResult.score >= API_MATCH_THRESHOLD) {
-        const matchedTrack = this.matchAPIResultToKephaleCatalog(auddResult.title, auddResult.artist, paidTracks);
-        if (matchedTrack) {
-          const result = await this.verifyRightsForTrack(userId, matchedTrack);
-          return {
-            ...result,
-            similarityScore: auddResult.score,
-            detectionMethod: 'AUDD',
-            message: result.isAuthorized
-              ? `Titre reconnu par AudD : "${matchedTrack.title}" (${result.message})`
-              : `Musique protégée détectée (AudD) : "${matchedTrack.title}" de ${matchedTrack.artist.stageName}. ${result.message}`,
-          };
-        }
+        // Musique externe reconnue (non dans le catalogue Kephale) → BLOQUER
+        // Protection contre l'utilisation de musiques de plateformes tierces
+        console.warn(`[AudioFingerprint] External music detected: "${externalApiResult.title}" by ${externalApiResult.artist} — blocking reel`);
+        return {
+          isCopyrighted: true,
+          isAuthorized: false,
+          rightsStatus: 'REQUIRES_PURCHASE',
+          tokensRequired: 0,
+          similarityScore: externalApiResult.score,
+          detectionMethod: externalApiResult.method as any,
+          message: `⚠️ Musique sous droits d'auteur détectée : "${externalApiResult.title}" par ${externalApiResult.artist}. Cette musique est protégée et ne peut pas être utilisée. Choisissez un son du catalogue Kephale ou enregistrez votre propre son original.`,
+        };
       }
 
       return null;
@@ -1041,6 +1097,7 @@ export class AudioFingerprintService {
         s3Key: true,
         artist: { select: { id: true, stageName: true, userId: true, avatar: true } },
       },
+
     });
 
     try {
@@ -1063,6 +1120,83 @@ export class AudioFingerprintService {
     } catch {
       // Ignore
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // DÉTECTION INSTANTANÉE — Hash de fichier côté mobile (Phase 0)
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Vérifie si un hash de fichier (SHA-256 des premiers 512 Ko) correspond à
+   * un son protégé déjà connu dans le catalogue Kephale.
+   *
+   * Appelé IMMÉDIATEMENT après la sélection du fichier sur mobile,
+   * AVANT le pré-upload S3. Réponse attendue < 100ms.
+   *
+   * @param userId      ID de l'utilisateur qui publie
+   * @param sha256Prefix Hash SHA-256 Base64 des premiers 512 Ko du fichier
+   * @param filename    Nom du fichier (pour la correspondance textuelle en fallback)
+   * @param fileSize    Taille du fichier en octets
+   */
+  public async checkAudioHash(userId: string, sha256Prefix: string, filename: string, fileSize: number): Promise<{
+    isKnown: boolean;
+    isAuthorized: boolean;
+    matchedTrack?: FingerprintMatchResult['matchedTrack'];
+    message: string;
+    rightsStatus: FingerprintMatchResult['rightsStatus'];
+  }> {
+    // Cache Redis : on stocke les résultats de hash précédemment identifiés
+    const hashCacheKey = `rights:hash:${sha256Prefix}`;
+    try {
+      const cached = await this.redis.get(hashCacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        // Re-vérifier les droits de cet utilisateur spécifique (il a peut-être acheté depuis)
+        if (parsed.trackId) {
+          const track = await this.prisma.track.findUnique({
+            where: { id: parsed.trackId },
+            include: { artist: { select: { id: true, stageName: true, userId: true, avatar: true } } },
+          });
+          if (track) {
+            const rights = await this.verifyRightsForTrack(userId, track);
+            return {
+              isKnown: true,
+              isAuthorized: rights.isAuthorized,
+              matchedTrack: rights.matchedTrack,
+              message: rights.message,
+              rightsStatus: rights.rightsStatus,
+            };
+          }
+        }
+        return parsed;
+      }
+    } catch {}
+
+    // Note : le champ `fileHash` n'est pas encore dans le schéma Prisma.
+    // La détection par hash exact DB sera ajoutée via migration future.
+    // Le cache Redis (issu des analyses précédentes) couvre déjà les fichiers connus.
+
+    // Tentative de correspondance par nom de fichier (heuristique légère)
+    const paidTracks = await this.getAllTracksWithCache();
+    const textMatch = this.findTextMatch([filename.replace(/\.[^.]+$/, '')], paidTracks);
+    if (textMatch && textMatch.score >= 0.92) {
+      // Score très élevé requis pour les correspondances par nom uniquement
+      const rights = await this.verifyRightsForTrack(userId, textMatch.track);
+      return {
+        isKnown: true,
+        isAuthorized: rights.isAuthorized,
+        matchedTrack: rights.matchedTrack,
+        message: `Son potentiellement protégé détecté via le nom du fichier : "${textMatch.track.title}". ${rights.message}`,
+        rightsStatus: rights.rightsStatus,
+      };
+    }
+
+    return {
+      isKnown: false,
+      isAuthorized: true,
+      message: 'Son non reconnu dans le catalogue — analyse approfondie en cours',
+      rightsStatus: 'ORIGINAL_SOUND',
+    };
   }
 
   /**

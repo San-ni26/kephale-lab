@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState, useReducer } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   ActivityIndicator, Alert, Pressable, Platform, useWindowDimensions
@@ -6,7 +6,7 @@ import {
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
@@ -19,53 +19,64 @@ import type { Video } from '@kephale/types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { VideoThumbnail } from '../../src/components/VideoThumbnail';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// REGISTRY PATTERN — Architecture "zéro re-render" pour le scroll fluide
+//
+// Principe :
+//   Chaque ReelVideoPlayer s'enregistre dans le registry à son montage.
+//   Le FlatList appelle directement activate()/deactivate() sur les players
+//   via onMomentumScrollEnd → AUCUN setState global → AUCUN re-render des items.
+//   Résultat : scroll 60fps garanti, lecture instantanée au retour.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type PlayerEntry = {
+  activate: () => void;
+  deactivate: () => void;
+};
+
+type PlayerRegistry = Map<number, PlayerEntry>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ReelVideoPlayer — Player memoïsé contrôlé uniquement via le registry
+// ─────────────────────────────────────────────────────────────────────────────
+
 const ReelVideoPlayer = React.memo(function ReelVideoPlayer({
   item,
-  isActive,
+  itemIndex,
+  registryRef,
   containerHeight,
 }: {
   item: Video;
-  isActive: boolean;
+  itemIndex: number;
+  registryRef: React.MutableRefObject<PlayerRegistry>;
   containerHeight: number;
 }) {
-  const { setPlaying: setGlobalIsPlaying, isPlaying: isGlobalPlaying } = usePlayerStore();
-  const [isPlaying, setIsPlaying] = useState(true);
+  const { setPlaying: setGlobalIsPlaying } = usePlayerStore();
+  // État local uniquement pour l'icône play/pause — ne déclenche PAS de re-render du parent
+  const [isPlaying, setIsPlaying] = useState(false);
   const [videoError, setVideoError] = useState(false);
-  const lastTimeRef = React.useRef(0);
+  const lastTimeRef = useRef(0);
+  const hasSentWatchRef = useRef(false);
+  const isActiveRef = useRef(false);
 
   const player = useVideoPlayer(item.videoUrl, (p) => {
     try {
       p.loop = true;
       p.muted = false;
-      if (isActive) {
-        p.play();
-      } else {
-        p.pause();
-      }
+      // Démarrer en pause — activation via le registry
+      p.pause();
     } catch {}
   });
 
-  const getSafeTime = React.useCallback(() => {
-    try {
-      if (player && typeof player.currentTime === 'number') {
-        lastTimeRef.current = player.currentTime;
-      }
-    } catch {}
-    return lastTimeRef.current;
-  }, [player]);
-
-  // Listener d'état et de progression sur le player vidéo
+  // Tracking du temps de lecture pour les analytics
   React.useEffect(() => {
     let subStatus: any = null;
     let subTime: any = null;
     try {
       if (player && typeof player.addListener === 'function') {
         subStatus = player.addListener('statusChange', (status) => {
-          if ((status as any)?.error) {
-            setVideoError(true);
-          }
+          if ((status as any)?.error) setVideoError(true);
         });
-
         subTime = player.addListener('timeUpdate', (event: any) => {
           if (event && typeof event.currentTime === 'number') {
             lastTimeRef.current = event.currentTime;
@@ -73,60 +84,72 @@ const ReelVideoPlayer = React.memo(function ReelVideoPlayer({
         });
       }
     } catch {}
-
     return () => {
       try { subStatus?.remove?.(); } catch {}
       try { subTime?.remove?.(); } catch {}
     };
   }, [player]);
 
-  const hasSentWatchRef = React.useRef(false);
-
-  // Gérer la visibilité & lecture instantanée
+  // ── Enregistrement dans le registry ──────────────────────────────────────
   React.useEffect(() => {
-    if (isActive) {
-      if (isGlobalPlaying) {
-        setGlobalIsPlaying(false);
-      }
-      setIsPlaying(true);
-      hasSentWatchRef.current = false;
-      try {
-        player.play();
-      } catch (e) {}
-    } else {
-      setIsPlaying(false);
-      try {
-        player.pause();
-      } catch (e) {}
-      const time = getSafeTime();
-      if (time >= 2 && !hasSentWatchRef.current) {
-        hasSentWatchRef.current = true;
-        videosAPI.watch(item.id, { watchDurationSec: time, completed: false }).catch(() => {});
-      }
-    }
+    const entry: PlayerEntry = {
+      activate: () => {
+        if (isActiveRef.current) return; // Déjà actif
+        isActiveRef.current = true;
+        hasSentWatchRef.current = false;
+        setIsPlaying(true);
+        setGlobalIsPlaying(false); // Couper le GlobalAudioPlayer
+        try { player.play(); } catch {}
+      },
+      deactivate: () => {
+        if (!isActiveRef.current) return;
+        isActiveRef.current = false;
+        setIsPlaying(false);
+        try { player.pause(); } catch {}
+        // Envoyer analytics si l'utilisateur a regardé ≥ 2s
+        const t = lastTimeRef.current;
+        if (t >= 2 && !hasSentWatchRef.current) {
+          hasSentWatchRef.current = true;
+          videosAPI.watch(item.id, { watchDurationSec: t, completed: false }).catch(() => {});
+        }
+      },
+    };
+
+    registryRef.current.set(itemIndex, entry);
 
     return () => {
-      const time = lastTimeRef.current;
-      if (time >= 2 && !hasSentWatchRef.current) {
-        hasSentWatchRef.current = true;
-        videosAPI.watch(item.id, { watchDurationSec: time, completed: false }).catch(() => {});
+      // Nettoyage : désactiver proprement à l'unmount
+      if (isActiveRef.current) {
+        isActiveRef.current = false;
+        try { player.pause(); } catch {}
+        const t = lastTimeRef.current;
+        if (t >= 2 && !hasSentWatchRef.current) {
+          hasSentWatchRef.current = true;
+          videosAPI.watch(item.id, { watchDurationSec: t, completed: false }).catch(() => {});
+        }
       }
+      registryRef.current.delete(itemIndex);
     };
-  }, [isActive, item.id, player, isGlobalPlaying, setGlobalIsPlaying, getSafeTime]);
+  }, [itemIndex, player, registryRef, item.id, setGlobalIsPlaying]);
+
+  const handlePress = useCallback(() => {
+    if (isActiveRef.current) {
+      if (isPlaying) {
+        setIsPlaying(false);
+        try { player.pause(); } catch {}
+      } else {
+        setIsPlaying(true);
+        try { player.play(); } catch {}
+      }
+    }
+  }, [isPlaying, player]);
 
   return (
-    <Pressable 
-      style={[styles.video, { height: containerHeight }]} 
-      onPress={() => {
-        const next = !isPlaying;
-        setIsPlaying(next);
-        try {
-          if (next) player.play();
-          else player.pause();
-        } catch {}
-      }}
+    <Pressable
+      style={[styles.video, { height: containerHeight }]}
+      onPress={handlePress}
     >
-      {/* Poster image always present under video to avoid any black frame or background loader */}
+      {/* Miniature toujours visible en arrière-plan (évite l'écran noir) */}
       <VideoThumbnail
         sourceUrl={item.thumbnailUrl}
         videoUrl={item.videoUrl}
@@ -168,16 +191,23 @@ const ReelVideoPlayer = React.memo(function ReelVideoPlayer({
   );
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ReelItem — Rendu stable grâce au registry (pas de prop isActive)
+// Mémoïsé par référence de `item` uniquement
+// ─────────────────────────────────────────────────────────────────────────────
+
 const ReelItem = React.memo(function ReelItem({
   item,
-  isActive,
-  isNearActive,
+  itemIndex,
+  registryRef,
+  shouldMountPlayer,
   containerHeight,
   onOpenComments,
 }: {
   item: Video & { hasLiked?: boolean };
-  isActive: boolean;
-  isNearActive: boolean;
+  itemIndex: number;
+  registryRef: React.MutableRefObject<PlayerRegistry>;
+  shouldMountPlayer: boolean;
   containerHeight: number;
   onOpenComments: (id: string) => void;
 }) {
@@ -187,7 +217,6 @@ const ReelItem = React.memo(function ReelItem({
   const queryClient = useQueryClient();
   const { downloads, downloading, downloadVideo, removeDownload } = useOfflineStore();
 
-  // ── Optimistic follow state ──────────────────────────────────────────────────
   const [isFollowing, setIsFollowing] = useState(false);
   const [isFollowLoading, setIsFollowLoading] = useState(false);
 
@@ -196,8 +225,6 @@ const ReelItem = React.memo(function ReelItem({
     onMutate: async () => {
       await queryClient.cancelQueries({ queryKey: ['reels-feed'] });
       const previous = queryClient.getQueryData(['reels-feed']);
-      
-      // Optimistic update in cache
       queryClient.setQueryData(['reels-feed'], (old: any) => {
         if (!old?.data?.data) return old;
         return {
@@ -212,52 +239,51 @@ const ReelItem = React.memo(function ReelItem({
                   hasLiked: !wasLiked,
                   _count: {
                     ...video._count,
-                    likes: wasLiked ? Math.max(0, (video._count?.likes ?? 1) - 1) : (video._count?.likes ?? 0) + 1
-                  }
+                    likes: wasLiked
+                      ? Math.max(0, (video._count?.likes ?? 1) - 1)
+                      : (video._count?.likes ?? 0) + 1,
+                  },
                 };
               }
               return video;
-            })
-          }
+            }),
+          },
         };
       });
-
       return { previous };
     },
-    onError: (err, variables, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(['reels-feed'], context.previous);
-      }
+    onError: (_err, _vars, context) => {
+      if (context?.previous) queryClient.setQueryData(['reels-feed'], context.previous);
     },
   });
 
-  const handleLike = () => {
+  const handleLike = useCallback(() => {
     if (!user) { router.push('/(auth)/welcome'); return; }
     likeMutation.mutate();
-  };
+  }, [user, likeMutation]);
 
-  const handleFollow = async () => {
+  const handleFollow = useCallback(async () => {
     if (!user) { router.push('/(auth)/welcome'); return; }
     if (!item.artist?.id || isFollowLoading) return;
-
     const wasFollowing = isFollowing;
     setIsFollowing(!wasFollowing);
     setIsFollowLoading(true);
-
     try {
-      if (wasFollowing) {
-        await artistsAPI.unfollow(item.artist.id);
-      } else {
-        await artistsAPI.follow(item.artist.id);
-      }
+      if (wasFollowing) await artistsAPI.unfollow(item.artist.id);
+      else await artistsAPI.follow(item.artist.id);
     } catch {
       setIsFollowing(wasFollowing);
     } finally {
       setIsFollowLoading(false);
     }
-  };
+  }, [user, item.artist?.id, isFollowLoading, isFollowing]);
 
-  const isOwner = !!user && ((item as any).userId === user.id || item.artist?.id === user.artistProfile?.id || (user.artistProfile && item.artistId === user.artistProfile.id) || (user as any).role === 'ADMIN');
+  const isOwner =
+    !!user &&
+    ((item as any).userId === user.id ||
+      item.artist?.id === user.artistProfile?.id ||
+      (user.artistProfile && item.artistId === user.artistProfile.id) ||
+      (user as any).role === 'ADMIN');
 
   const deleteReelMutation = useMutation({
     mutationFn: () => videosAPI.delete(item.id),
@@ -272,7 +298,7 @@ const ReelItem = React.memo(function ReelItem({
     },
   });
 
-  const handleDeleteReel = () => {
+  const handleDeleteReel = useCallback(() => {
     Alert.alert(
       'Supprimer le Reel',
       `Voulez-vous supprimer définitivement "${item.title}" ?`,
@@ -281,7 +307,7 @@ const ReelItem = React.memo(function ReelItem({
         { text: 'Supprimer', style: 'destructive', onPress: () => deleteReelMutation.mutate() },
       ]
     );
-  };
+  }, [item.title, deleteReelMutation]);
 
   const formatCount = (n: number) => {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -293,11 +319,12 @@ const ReelItem = React.memo(function ReelItem({
     <View style={[styles.reelContainer, { height: containerHeight }]}>
       <StatusBar style="light" />
 
-      {/* Video active or preloaded adjacent video for instant playback */}
-      {(isActive || isNearActive) && !!item.videoUrl ? (
+      {/* Player monté pour les items actifs et adjacents */}
+      {shouldMountPlayer && !!item.videoUrl ? (
         <ReelVideoPlayer
           item={item}
-          isActive={isActive}
+          itemIndex={itemIndex}
+          registryRef={registryRef}
           containerHeight={containerHeight}
         />
       ) : (
@@ -311,20 +338,19 @@ const ReelItem = React.memo(function ReelItem({
         </View>
       )}
 
-      {/* Gradient overlay */}
+      {/* Dark gradient */}
       <View style={styles.gradient} pointerEvents="none" />
 
       {/* Right Action Bar */}
       <View style={styles.actionBar}>
-        {/* Artist avatar */}
         <TouchableOpacity
           style={styles.artistAvatarWrap}
           onPress={() => item.artist?.id && router.push(`/artist/${item.artist.id}`)}
         >
           {item.artist?.avatar ? (
-            <Image 
-              source={{ uri: item.artist.avatar }} 
-              style={styles.artistAvatar} 
+            <Image
+              source={{ uri: item.artist.avatar }}
+              style={styles.artistAvatar}
               cachePolicy="memory-disk"
               contentFit="cover"
             />
@@ -338,7 +364,6 @@ const ReelItem = React.memo(function ReelItem({
           </View>
         </TouchableOpacity>
 
-        {/* Like */}
         <TouchableOpacity style={styles.actionBtn} onPress={handleLike}>
           <Ionicons
             name={liked ? 'heart' : 'heart-outline'}
@@ -348,38 +373,30 @@ const ReelItem = React.memo(function ReelItem({
           <Text style={styles.actionCount}>{formatCount(likeCount)}</Text>
         </TouchableOpacity>
 
-        {/* Comment */}
         <TouchableOpacity style={styles.actionBtn} onPress={() => onOpenComments(item.id)}>
           <Ionicons name="chatbubble-outline" size={28} color="#FFF" />
           <Text style={styles.actionCount}>{formatCount(item._count?.comments ?? 0)}</Text>
         </TouchableOpacity>
 
-        {/* Share */}
         <TouchableOpacity style={styles.actionBtn}>
           <Ionicons name="arrow-redo-outline" size={28} color="#FFF" />
           <Text style={styles.actionCount}>Partager</Text>
         </TouchableOpacity>
 
-        {/* Views */}
         <TouchableOpacity style={styles.actionBtn}>
           <Ionicons name="eye-outline" size={24} color="#FFF" />
           <Text style={styles.actionCount}>{formatCount(item.views)}</Text>
         </TouchableOpacity>
 
-        {/* Download Clip offline */}
         {downloads[item.id] ? (
-          <TouchableOpacity 
-            style={styles.actionBtn} 
-            onPress={() => {
-              Alert.alert(
-                'Supprimer',
-                'Supprimer ce clip des fichiers hors ligne ?',
-                [
-                  { text: 'Annuler', style: 'cancel' },
-                  { text: 'Supprimer', style: 'destructive', onPress: () => removeDownload(item.id) }
-                ]
-              );
-            }}
+          <TouchableOpacity
+            style={styles.actionBtn}
+            onPress={() =>
+              Alert.alert('Supprimer', 'Supprimer ce clip des fichiers hors ligne ?', [
+                { text: 'Annuler', style: 'cancel' },
+                { text: 'Supprimer', style: 'destructive', onPress: () => removeDownload(item.id) },
+              ])
+            }
           >
             <Ionicons name="cloud-done" size={24} color="#10B981" />
             <Text style={[styles.actionCount, { color: '#10B981' }]}>Téléchargé</Text>
@@ -396,7 +413,6 @@ const ReelItem = React.memo(function ReelItem({
           </TouchableOpacity>
         )}
 
-        {/* Delete option for the owner / creator of the reel */}
         {isOwner && (
           <TouchableOpacity style={styles.actionBtn} onPress={handleDeleteReel}>
             <Ionicons name="trash-outline" size={24} color="#EF4444" />
@@ -421,10 +437,7 @@ const ReelItem = React.memo(function ReelItem({
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[
-              styles.inlineFollowBtn,
-              isFollowing && styles.inlineFollowBtnActive,
-            ]}
+            style={[styles.inlineFollowBtn, isFollowing && styles.inlineFollowBtnActive]}
             onPress={handleFollow}
             disabled={isFollowLoading}
           >
@@ -440,10 +453,11 @@ const ReelItem = React.memo(function ReelItem({
         <Text style={styles.reelTitle} numberOfLines={2}>{item.title}</Text>
 
         {item.description ? (
-          <Text style={styles.reelDesc} numberOfLines={3} ellipsizeMode="tail">{item.description}</Text>
+          <Text style={styles.reelDesc} numberOfLines={3} ellipsizeMode="tail">
+            {item.description}
+          </Text>
         ) : null}
 
-        {/* Sound bar animation placeholder */}
         <View style={styles.soundRow}>
           <Ionicons name="musical-note" size={14} color="#FFF" />
           <Text style={styles.soundText} numberOfLines={1}>{item.title}</Text>
@@ -453,36 +467,59 @@ const ReelItem = React.memo(function ReelItem({
   );
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ReelsScreen — Composant principal
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function ReelsScreen() {
   const { videoId } = useLocalSearchParams<{ videoId?: string }>();
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [isScreenFocused, setIsScreenFocused] = useState(true);
-  
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const tabBarHeight = 60 + (insets.bottom > 0 ? insets.bottom : 10);
   const containerHeight = Math.round(windowHeight - tabBarHeight);
 
+  // ── Registry : contrôle play/pause sans re-render ─────────────────────────
+  const registryRef = useRef<PlayerRegistry>(new Map());
+  const activeIndexRef = useRef<number>(0);
+
+  // État local UNIQUEMENT pour décider quels items montent le <ReelVideoPlayer>
+  // (windowSize=5 du FlatList gère déjà le pre-mount, ce state ne sert qu'aux
+  //  items HORS fenêtre de virtualisation qu'on veut garder montés)
+  const [mountedCenter, setMountedCenter] = useState(0);
+
   const flatListRef = useRef<FlatList>(null);
-  
   const [isCommentsVisible, setIsCommentsVisible] = useState(false);
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const isScreenFocusedRef = useRef(true);
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
 
   const {
-    data: res,
+    data: infiniteData,
     isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
     refetch,
-  } = useQuery({
+  } = useInfiniteQuery({
     queryKey: ['reels-feed'],
-    queryFn: () => videosAPI.list({ type: 'SHORT', limit: 30, sort: 'for_you' }),
+    queryFn: ({ pageParam = 1 }) =>
+      videosAPI.list({ type: 'SHORT', limit: 10, page: pageParam, sort: 'for_you' }),
+    getNextPageParam: (lastPage: any) => {
+      const pagination = lastPage?.data?.pagination;
+      return pagination?.hasNext ? pagination.page + 1 : undefined;
+    },
+    initialPageParam: 1,
   });
 
-  const showAds = useShouldShowAds();
-  const rawReels: Video[] = res?.data?.data ?? [];
+  // Aplatir toutes les pages en un seul tableau
+  const rawReels: Video[] = React.useMemo(
+    () => infiniteData?.pages?.flatMap((page: any) => page?.data?.data ?? []) ?? [],
+    [infiniteData]
+  );
 
+  const showAds = useShouldShowAds();
   const reels = React.useMemo(() => {
     if (!showAds || rawReels.length < 4) return rawReels;
     const items: (Video | { id: string; isAd: boolean })[] = [];
@@ -495,37 +532,83 @@ export default function ReelsScreen() {
     return items;
   }, [rawReels, showAds]);
 
-  // Pause all when screen loses focus
+  // ── Fonction centrale d'activation (zéro setState pendant le scroll) ──────
+  const activateIndex = useCallback((newIndex: number) => {
+    const clampedIndex = Math.max(0, Math.min(newIndex, reels.length - 1));
+
+    if (!isScreenFocusedRef.current) {
+      // Écran inactif → désactiver tout silencieusement
+      registryRef.current.get(activeIndexRef.current)?.deactivate();
+      activeIndexRef.current = clampedIndex;
+      return;
+    }
+
+    if (clampedIndex === activeIndexRef.current) {
+      // Même index → juste s'assurer que la vidéo joue (retour rapide)
+      registryRef.current.get(clampedIndex)?.activate();
+      return;
+    }
+
+    // Désactiver l'ancienne vidéo
+    registryRef.current.get(activeIndexRef.current)?.deactivate();
+
+    // Activer la nouvelle
+    activeIndexRef.current = clampedIndex;
+    registryRef.current.get(clampedIndex)?.activate();
+
+    // Mettre à jour le center pour que le FlatList monte les players adjacents
+    setMountedCenter(clampedIndex);
+  }, [reels.length]);
+
+  // ── Pause/Resume sur changement de focus ─────────────────────────────────
   useFocusEffect(
     useCallback(() => {
-      setIsScreenFocused(true);
+      isScreenFocusedRef.current = true;
+      // Réactiver la vidéo courante au retour sur l'écran
+      registryRef.current.get(activeIndexRef.current)?.activate();
       return () => {
-        setIsScreenFocused(false);
+        isScreenFocusedRef.current = false;
+        registryRef.current.get(activeIndexRef.current)?.deactivate();
       };
     }, [])
   );
 
+  // ── Scroll handlers ───────────────────────────────────────────────────────
+
+  // Trigger principal : onMomentumScrollEnd → scroll s'est arrêté → activation propre
+  const handleMomentumScrollEnd = useCallback((e: any) => {
+    const offsetY = e.nativeEvent.contentOffset.y;
+    const newIndex = Math.round(offsetY / containerHeight);
+    activateIndex(newIndex);
+  }, [containerHeight, activateIndex]);
+
+  // Trigger secondaire : viewability → filet de sécurité pour les cas limites
   const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
     if (viewableItems && viewableItems.length > 0) {
       const topItem = viewableItems[0];
       if (topItem && typeof topItem.index === 'number') {
-        setActiveIndex(topItem.index);
+        activateIndex(topItem.index);
       }
     }
   }).current;
 
   const viewabilityConfig = useRef({
-    itemVisiblePercentThreshold: 50,
-    minimumViewTime: 50,
+    itemVisiblePercentThreshold: 80, // L'item doit être à 80% visible
+    minimumViewTime: 150,            // 150ms minimum pour éviter les activations pendant le scroll
   }).current;
 
-  const handleMomentumScrollEnd = useCallback((e: any) => {
-    const offsetY = e.nativeEvent.contentOffset.y;
-    const index = Math.round(offsetY / containerHeight);
-    if (index >= 0 && index < reels.length && index !== activeIndex) {
-      setActiveIndex(index);
+  // ── Navigation vers un videoId spécifique (depuis une notification) ───────
+  React.useEffect(() => {
+    if (videoId && reels.length > 0) {
+      const idx = reels.findIndex((r: any) => r.id === videoId);
+      if (idx >= 0) {
+        setTimeout(() => {
+          flatListRef.current?.scrollToIndex({ index: idx, animated: false });
+          activateIndex(idx);
+        }, 200);
+      }
     }
-  }, [containerHeight, reels.length, activeIndex]);
+  }, [videoId, reels, activateIndex]);
 
   const handleOpenComments = useCallback((id: string) => {
     setSelectedVideoId(id);
@@ -534,14 +617,16 @@ export default function ReelsScreen() {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    try {
-      await refetch();
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsRefreshing(false);
-    }
+    try { await refetch(); } catch {}
+    setIsRefreshing(false);
   };
+
+  // Charger la page suivante quand on approche de la fin (infinite scroll)
+  const handleEndReached = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const handleSkipAd = useCallback((index: number) => {
     if (index < reels.length - 1) {
@@ -549,6 +634,8 @@ export default function ReelsScreen() {
     }
   }, [reels.length]);
 
+  // ── renderItem stable — ne dépend PAS de activeIndex/mountedCenter state ──
+  // shouldMountPlayer est calculé localement dans chaque item via un ref snapshot
   const renderItem = useCallback(({ item, index }: { item: any; index: number }) => {
     if (item.isAd) {
       return (
@@ -559,16 +646,21 @@ export default function ReelsScreen() {
       );
     }
 
+    // On monte le player pour l'item actif et son voisin immédiat uniquement
+    // Cohérent avec windowSize=3 (1 avant + 1 actif + 1 après)
+    const shouldMountPlayer = Math.abs(index - mountedCenter) <= 1;
+
     return (
-      <ReelItem 
-        item={item} 
-        isActive={isScreenFocused && index === activeIndex} 
-        isNearActive={Math.abs(index - activeIndex) <= 1}
+      <ReelItem
+        item={item}
+        itemIndex={index}
+        registryRef={registryRef}
+        shouldMountPlayer={shouldMountPlayer}
         containerHeight={containerHeight}
-        onOpenComments={handleOpenComments} 
+        onOpenComments={handleOpenComments}
       />
     );
-  }, [activeIndex, handleOpenComments, isScreenFocused, containerHeight, handleSkipAd]);
+  }, [containerHeight, handleOpenComments, handleSkipAd, mountedCenter]);
 
   if (isLoading) {
     return (
@@ -598,20 +690,31 @@ export default function ReelsScreen() {
         renderItem={renderItem}
         keyExtractor={(item) => item.id}
         showsVerticalScrollIndicator={false}
-        pagingEnabled={true}
-        snapToInterval={Platform.OS === 'android' ? containerHeight : undefined}
-        snapToAlignment={Platform.OS === 'android' ? 'start' : undefined}
-        decelerationRate={Platform.OS === 'android' ? 'fast' : 'normal'}
-        disableIntervalMomentum={Platform.OS === 'android'}
+
+        // ── Snap page-par-page (style TikTok) ─────────────────────────────
+        pagingEnabled={Platform.OS === 'ios'}
+        snapToInterval={containerHeight}
+        snapToAlignment="start"
+        decelerationRate="fast"          // Arrêt net comme TikTok
+        disableIntervalMomentum={true}   // Empêche de sauter plusieurs pages d'un coup
         bounces={false}
         overScrollMode="never"
+
+        // ── Performance ───────────────────────────────────────────────────
+        scrollEventThrottle={16}         // 60fps
+        initialNumToRender={1}           // Rendre 1 item au démarrage
+        maxToRenderPerBatch={2}          // Rendre 2 items par batch
+        windowSize={3}                   // 1 avant + 1 actif + 1 après = 3 players max en mémoire
+        removeClippedSubviews={false}    // IMPORTANT: false pour garder les players montés
+
+        // ── Handlers ─────────────────────────────────────────────────────
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
         onMomentumScrollEnd={handleMomentumScrollEnd}
-        initialNumToRender={2}
-        maxToRenderPerBatch={2}
-        windowSize={3}
-        removeClippedSubviews={Platform.OS === 'android'}
+        onEndReached={handleEndReached}  // Infinite scroll
+        onEndReachedThreshold={0.5}      // Déclencher 50% avant la fin
+
+        // ── Layout ───────────────────────────────────────────────────────
         refreshing={isRefreshing}
         onRefresh={handleRefresh}
         getItemLayout={(_, index) => ({
@@ -621,7 +724,8 @@ export default function ReelsScreen() {
         })}
         style={{ flex: 1, height: containerHeight }}
       />
-      {/* Floating Create Reel Studio Button */}
+
+      {/* Bouton Studio Reel */}
       <TouchableOpacity
         style={[styles.createStudioBtn, { top: insets.top + 10 }]}
         onPress={() => {
@@ -695,7 +799,6 @@ const styles = StyleSheet.create({
     bottom: 0,
   },
 
-  // Overlay de pause vidéo
   pauseOverlay: {
     position: 'absolute',
     top: 0, left: 0, right: 0, bottom: 0,
@@ -712,7 +815,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  // Overlay d'erreur vidéo
   errorOverlay: {
     position: 'absolute',
     top: 0, left: 0, right: 0, bottom: 0,
@@ -721,7 +823,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 10,
   },
-  errorIcon: { fontSize: 40, marginBottom: 12 },
   errorText: { color: '#FFF', fontSize: 16, fontWeight: '600', marginBottom: 16 },
   errorRetryBtn: {
     paddingHorizontal: 24,
@@ -731,7 +832,6 @@ const styles = StyleSheet.create({
   },
   errorRetryText: { color: '#FFF', fontWeight: '700', fontSize: 14 },
 
-  // Dark gradient for readability
   gradient: {
     position: 'absolute',
     bottom: 0,
@@ -741,7 +841,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
 
-  // Right action bar
   actionBar: {
     position: 'absolute',
     right: 14,
@@ -787,7 +886,6 @@ const styles = StyleSheet.create({
     textShadowRadius: 4,
   },
 
-  // Bottom info
   bottomInfo: {
     position: 'absolute',
     bottom: 24,
@@ -859,4 +957,3 @@ const styles = StyleSheet.create({
     textShadowRadius: 4,
   },
 });
-

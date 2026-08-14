@@ -4,6 +4,8 @@ import { OAuth2Client } from 'google-auth-library';
 import { PrismaClient } from '@prisma/client';
 import * as jwt from 'jsonwebtoken';
 import * as bcrypt from 'bcryptjs';
+import { randomInt, createHash } from 'crypto';
+
 
 interface LocalRegisterData {
   email: string;
@@ -43,13 +45,33 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
+  // ── Utilitaire interne : hash d'un refresh token ──────────────────────────
+  // Les refresh tokens sont hashés (SHA-256) avant persistance en DB.
+  // En cas de fuite DB, les tokens restent inutilisables car non-réversibles.
+  private hashToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
   async saveRefreshToken(userId: string, token: string) {
     const refreshExpiresAt = new Date();
     refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 30);
+
+    // Nettoyer les anciens tokens expirés/révoqués avant d'en créer un nouveau
+    // (limite l'accumulation en DB et réduit la surface d'attaque)
+    await this.prisma.refreshToken.deleteMany({
+      where: {
+        userId,
+        OR: [
+          { isRevoked: true },
+          { expiresAt: { lt: new Date() } },
+        ],
+      },
+    });
+
     return this.prisma.refreshToken.create({
       data: {
         userId,
-        token,
+        token: this.hashToken(token), // ← Stockage du hash, jamais du token en clair
         expiresAt: refreshExpiresAt,
       },
     });
@@ -205,15 +227,17 @@ export class AuthService {
       throw new UnauthorizedException('Session expirée, veuillez vous reconnecter.');
     }
 
+    // Chercher par hash (les tokens sont stockés hashés en DB)
+    const tokenHash = this.hashToken(token);
     const storedToken = await this.prisma.refreshToken.findUnique({
-      where: { token },
+      where: { token: tokenHash },
     });
 
     if (!storedToken || storedToken.isRevoked || storedToken.expiresAt < new Date()) {
       throw new UnauthorizedException('Session expirée, veuillez vous reconnecter.');
     }
 
-    // Rotate token
+    // Rotation : révoquer l'ancien token
     await this.prisma.refreshToken.update({
       where: { id: storedToken.id },
       data: { isRevoked: true },
@@ -226,8 +250,9 @@ export class AuthService {
   }
 
   async logout(token: string) {
+    const tokenHash = this.hashToken(token);
     await this.prisma.refreshToken.updateMany({
-      where: { token },
+      where: { token: tokenHash },
       data: { isRevoked: true },
     });
   }
@@ -244,15 +269,16 @@ export class AuthService {
       data: { isUsed: true },
     });
 
-    const crypto = await import('crypto');
-    const rawToken = crypto.randomBytes(32).toString('hex');
+    // OTP cryptographiquement sécurisé (crypto.randomInt vs Math.random non-cryptographique)
+    const otp = randomInt(100000, 999999).toString();
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000); 
+
+    // Token unique au format userId:OTP
+    const rawToken = `${user.id}:${otp}`;
 
     await this.prisma.passwordResetToken.create({
       data: { userId: user.id, token: rawToken, expiresAt },
     });
-
-    const resetUrl = `${this.configService.get<string>('FRONTEND_URL')}/reset-password?token=${rawToken}`;
 
     const resendKey = this.configService.get<string>('RESEND_API_KEY');
     if (resendKey) {
@@ -267,11 +293,8 @@ export class AuthService {
             <h2>Réinitialisation de mot de passe</h2>
             <p>Bonjour ${user.name},</p>
             <p>Vous avez demandé la réinitialisation de votre mot de passe.</p>
-            <p>
-              <a href="${resetUrl}" style="background:#FF5A00;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;">
-                Réinitialiser mon mot de passe
-              </a>
-            </p>
+            <p>Voici votre code de sécurité (OTP) à 6 chiffres :</p>
+            <h1 style="letter-spacing:4px;color:#FF5A00;">${otp}</h1>
             <p>Ce lien expire dans <strong>1 heure</strong>.</p>
             <p>Si vous n'avez pas fait cette demande, ignorez cet email.</p>
           `,
@@ -280,13 +303,17 @@ export class AuthService {
         console.error('[Auth] Failed to send reset email via Resend:', emailErr?.message);
       }
     } else {
-      console.log(`[DEV] Password reset link for ${email}: ${resetUrl}`);
+      console.log(`[DEV] Password reset OTP for ${email}: ${otp}`);
     }
 
     return { success: true, message: 'Si un compte existe avec cet email, un lien de réinitialisation a été envoyé.' };
   }
 
-  async resetPasswordConfirm(token: string, newPassword: string) {
+  async resetPasswordConfirm(email: string, otp: string, newPassword: string) {
+    const user = await this.prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
+    if (!user) throw new BadRequestException('Lien de réinitialisation invalide ou expiré.');
+    
+    const token = `${user.id}:${otp}`;
     const resetToken = await this.prisma.passwordResetToken.findUnique({ where: { token } });
 
     if (!resetToken || resetToken.isUsed || resetToken.expiresAt < new Date()) {

@@ -1,15 +1,14 @@
-import { Tabs } from 'expo-router';
+import { Tabs, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { chatAPI } from '../../src/lib/api';
 import { useAuthStore } from '../../src/stores';
 import { getGlobalSocket } from '../../src/lib/socket';
 
 import MiniPlayer from '../../src/components/MiniPlayer';
-import GlobalAudioPlayer from '../../src/components/GlobalAudioPlayer';
 import PhoneRequiredModal from '../../src/components/PhoneRequiredModal';
 
 export default function TabsLayout() {
@@ -18,6 +17,27 @@ export default function TabsLayout() {
   
   const { isAuthenticated } = useAuthStore();
   const queryClient = useQueryClient();
+  // Ref pour éviter la redirection au premier montage (hydration)
+  const prevAuthRef = useRef(isAuthenticated);
+
+  // ── Redirection automatique au logout ──────────────────────────────────
+  // Sans ce useEffect, l'utilisateur reste bloqué sur les tabs après
+  // déconnexion car Expo Router ne navigue pas automatiquement.
+  // Les queries TanStack continuent de s'exécuter avec un token nul
+  // et l'app reste en état de chargement infini.
+  useEffect(() => {
+    if (prevAuthRef.current && !isAuthenticated) {
+      // L'utilisateur vient de se déconnecter : vider le cache des queries
+      // privées avant de rediriger pour éviter tout flash de données
+      queryClient.removeQueries({ queryKey: ['my-purchases'] });
+      queryClient.removeQueries({ queryKey: ['my-notifications'] });
+      queryClient.removeQueries({ queryKey: ['unread-count'] });
+      queryClient.removeQueries({ queryKey: ['conversations'] });
+      // Rediriger vers l'écran de bienvenue
+      router.replace('/(auth)/welcome' as any);
+    }
+    prevAuthRef.current = isAuthenticated;
+  }, [isAuthenticated, queryClient]);
 
   const { data: unreadData } = useQuery({
     queryKey: ['unread-count'],
@@ -113,7 +133,6 @@ export default function TabsLayout() {
           }}
         />
       </Tabs>
-      <GlobalAudioPlayer />
       <MiniPlayer tabBarHeight={tabBarHeight} />
       <PhoneRequiredModal />
     </View>

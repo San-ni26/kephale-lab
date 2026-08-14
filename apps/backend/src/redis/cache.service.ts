@@ -71,25 +71,37 @@ export class CacheService {
   }
 
   /**
-   * Invalidate keys matching a pattern (e.g. "tracks:*")
+   * Invalide les clés correspondant à un pattern (ex: "tracks:*")
+   *
+   * ⚠️  IMPORTANT : Cette méthode retourne une vraie Promise qui se résout
+   * uniquement quand le scanStream Redis est terminé. Utiliser await.
    */
   async delByPattern(pattern: string): Promise<void> {
-    try {
-      const stream = this.redis.scanStream({
-        match: pattern,
-        count: 100,
-      });
+    return new Promise<void>((resolve, reject) => {
+      try {
+        const stream = this.redis.scanStream({
+          match: pattern,
+          count: 100,
+        });
 
-      stream.on('data', async (keys: string[]) => {
-        if (keys.length) {
-          const pipeline = this.redis.pipeline();
-          keys.forEach((key) => pipeline.del(key));
-          await pipeline.exec();
-        }
-      });
-    } catch (err: any) {
-      this.logger.warn(`Redis delByPattern error on "${pattern}": ${err?.message}`);
-    }
+        stream.on('data', async (keys: string[]) => {
+          if (keys.length) {
+            const pipeline = this.redis.pipeline();
+            keys.forEach((key) => pipeline.del(key));
+            await pipeline.exec();
+          }
+        });
+
+        stream.on('end', () => resolve());
+        stream.on('error', (err: Error) => {
+          this.logger.warn(`Redis delByPattern error on "${pattern}": ${err?.message}`);
+          resolve(); // On résout quand même pour ne pas bloquer l'opération principale
+        });
+      } catch (err: any) {
+        this.logger.warn(`Redis delByPattern error on "${pattern}": ${err?.message}`);
+        resolve();
+      }
+    });
   }
 
   /**

@@ -1,19 +1,52 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, BadRequestException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { Redis } from 'ioredis';
+import { ExpoPushService } from './expo-push.service';
 
 type NotificationType = 'NEW_TRACK' | 'NEW_ALBUM' | 'NEW_VIDEO';
+
+// Regex Expo Push Token valide
+const EXPO_PUSH_TOKEN_REGEX = /^ExponentPushToken\[.+\]$|^[a-zA-Z0-9_-]{20,}$/;
 
 @Injectable()
 export class NotificationsService {
   constructor(
     private readonly prisma: PrismaClient,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    private readonly expoPushService: ExpoPushService,
   ) {}
 
   private publishUserUpdate(userId: string, data: any) {
     const channel = `user:${userId}:updates`;
     this.redis.publish(channel, JSON.stringify(data)).catch(() => {});
+  }
+
+  /**
+   * Enregistre le token Expo Push de l'utilisateur en base de données.
+   * Appelé depuis le mobile après accord des permissions de notification.
+   * Requis pour recevoir des notifications push en production.
+   */
+  async registerPushToken(userId: string, token: string): Promise<{ registered: boolean }> {
+    if (!token || !EXPO_PUSH_TOKEN_REGEX.test(token)) {
+      throw new BadRequestException('Token Expo Push invalide');
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { pushToken: token },
+    });
+
+    return { registered: true };
+  }
+
+  /**
+   * Supprime le token Expo Push (logout ou désactivation des notifications)
+   */
+  async unregisterPushToken(userId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { pushToken: null },
+    });
   }
 
   async getMyNotifications(userId: string) {
@@ -84,6 +117,18 @@ export class NotificationsService {
         data: payload.data || {},
       });
     });
+
+    // Envoi des notifications push natives
+    this.expoPushService
+      .sendToUsers(
+        followers.map((f) => f.userId),
+        {
+          title: payload.title,
+          body: payload.body,
+          data: { type, ...(payload.data || {}) },
+        },
+      )
+      .catch(() => {});
   }
 
   async sendNotification(userId: string, title: string, body: string, type: string, data: any = {}) {
@@ -101,5 +146,14 @@ export class NotificationsService {
       type: 'NOTIFICATION',
       data: { title, body, type },
     });
+
+    // Envoi de la notification push native
+    this.expoPushService
+      .sendToUser(userId, {
+        title,
+        body,
+        data: { type, ...(data || {}) },
+      })
+      .catch(() => {});
   }
 }

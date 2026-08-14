@@ -4,9 +4,10 @@ import { VideosService } from './videos.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
+import { OptionalAuth } from '../auth/optional-auth.decorator';
 import type { Request } from 'express';
 import { z } from 'zod';
-import * as jwt from 'jsonwebtoken';
+
 
 const CreateVideoSchema = z.object({
   title: z.string().min(1).max(200),
@@ -37,6 +38,12 @@ const VerifyAudioRightsSchema = z.object({
   description: z.string().optional(),
 });
 
+const CheckAudioHashSchema = z.object({
+  sha256Prefix: z.string().min(8).max(256),
+  filename: z.string().min(1).max(500),
+  fileSize: z.number().min(0),
+});
+
 const UpdateVideoSchema = CreateVideoSchema.omit({ videoUrl: true, s3Key: true, type: true }).partial();
 
 const VideoQuerySchema = z.object({
@@ -54,22 +61,9 @@ export class VideosController {
   constructor(private readonly videosService: VideosService) {}
 
   @Get()
-  async getVideos(@Req() req: Request, @Query() query: any) {
+  async getVideos(@OptionalAuth() userId: string | null, @Req() req: Request, @Query() query: any) {
     const parsed = VideoQuerySchema.safeParse(query);
     if (!parsed.success) throw new BadRequestException({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid query' } });
-
-    let userId: string | null = null;
-    try {
-      const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const secret = process.env.JWT_SECRET;
-        if (secret) {
-          const token = authHeader.split(' ')[1];
-          const decoded = jwt.verify(token, secret) as { userId: string };
-          userId = decoded.userId;
-        }
-      }
-    } catch {}
 
     const sessionHeader = (req.headers['x-session-id'] || req.headers['x-anonymous-id']) as string | undefined;
     
@@ -102,6 +96,27 @@ export class VideosController {
     return { success: true, data };
   }
 
+  /**
+   * Vérification instantanée par hash SHA-256 du fichier.
+   * Appelé depuis le mobile AVANT l'upload pour une détection immédiate des copies exactes.
+   * Réponse attendue < 200ms.
+   */
+  @Post('check-audio-hash')
+  @UseGuards(AuthGuard)
+  @Throttle({ default: { ttl: 60000, limit: 60 } })
+  async checkAudioHash(@Req() req: Request, @Body() body: any) {
+    const parsed = CheckAudioHashSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Paramètres invalides' } });
+
+    const data = await this.videosService.checkAudioHash(
+      req.user!.userId,
+      parsed.data.sha256Prefix,
+      parsed.data.filename,
+      parsed.data.fileSize,
+    );
+    return { success: true, data };
+  }
+
   @Post()
   @UseGuards(AuthGuard)
   async createVideo(@Req() req: Request, @Body() body: any) {
@@ -113,20 +128,7 @@ export class VideosController {
   }
 
   @Get(':id')
-  async getVideoById(@Req() req: Request, @Param('id') id: string) {
-    let userId: string | null = null;
-    try {
-      const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const secret = process.env.JWT_SECRET;
-        if (secret) {
-          const token = authHeader.split(' ')[1];
-          const decoded = jwt.verify(token, secret) as { userId: string };
-          userId = decoded.userId;
-        }
-      }
-    } catch {}
-
+  async getVideoById(@OptionalAuth() userId: string | null, @Param('id') id: string) {
     const data = await this.videosService.getVideoById(userId, id);
     return { success: true, data };
   }

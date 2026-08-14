@@ -19,6 +19,7 @@ interface AuthSocket extends Socket {
   userId?: string;
   userName?: string;
   userAvatar?: string | null;
+  currentLiveId?: string;
 }
 
 @Injectable()
@@ -62,15 +63,14 @@ export class LivesGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   async handleDisconnect(client: AuthSocket) {
-    const rooms = Array.from(client.rooms || []).filter((r) => r.startsWith('live:'));
-    for (const room of rooms) {
-      const liveId = room.replace('live:', '');
+    if (client.currentLiveId) {
+      const liveId = client.currentLiveId;
       const redisKey = `live:viewers:${liveId}`;
       const exists = await this.redis.exists(redisKey);
       if (exists) {
         const newCount = Math.max(0, await this.redis.decr(redisKey));
         if (newCount === 0) await this.redis.del(redisKey);
-        this.server.to(room).emit('live:viewer_count', { count: newCount });
+        this.server.to(`live:${liveId}`).emit('live:viewer_count', { count: newCount });
       }
     }
   }
@@ -78,6 +78,12 @@ export class LivesGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('live:join')
   async handleJoinLive(@ConnectedSocket() client: AuthSocket, @MessageBody() liveId: string) {
     if (!liveId) return;
+
+    if (client.currentLiveId === liveId) return;
+    if (client.currentLiveId) {
+      await this.handleLeaveLive(client, client.currentLiveId);
+    }
+    client.currentLiveId = liveId;
 
     client.join(`live:${liveId}`);
 
@@ -98,6 +104,10 @@ export class LivesGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('live:leave')
   async handleLeaveLive(@ConnectedSocket() client: AuthSocket, @MessageBody() liveId: string) {
     if (!liveId) return;
+
+    if (client.currentLiveId === liveId) {
+      delete client.currentLiveId;
+    }
 
     client.leave(`live:${liveId}`);
 

@@ -34,6 +34,14 @@ export class UsersService {
     return updatedUser;
   }
 
+  async updatePushToken(userId: string, pushToken: string) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { pushToken },
+      select: { id: true, pushToken: true },
+    });
+  }
+
   async deleteMe(userId: string, body: any) {
     const dbUser = await this.prisma.user.findUnique({
       where: { id: userId },

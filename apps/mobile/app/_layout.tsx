@@ -1,5 +1,5 @@
 import 'react-native-gesture-handler';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -11,6 +11,12 @@ import { CustomAlertProvider } from '../src/components/CustomAlertProvider';
 import { useAuthStore } from '../src/stores';
 import { useOfflineStore } from '../src/stores/offlineStore';
 import { initGlobalSocket, disconnectGlobalSocket } from '../src/lib/socket';
+import { userAPI } from '../src/lib/api';
+import GlobalAudioPlayer from '../src/components/GlobalAudioPlayer';
+
+// Push Notifications nécessitent un Development Client (pas supporté en Expo Go).
+// Constants.appOwnership === 'expo' dans Expo Go, absent en Dev Build / production.
+const isDevClient = Constants.appOwnership !== 'expo';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -65,6 +71,53 @@ export default function RootLayout() {
     purgeExpiredDownloads().catch(() => {});
   }, []);
 
+  // Enregistrement et écoute des Push Notifications Expo
+  // Utilise des imports dynamiques pour ne pas charger expo-notifications en Expo Go
+  // (le simple import statique suffit à déclencher l'erreur SDK 53 en Expo Go)
+  useEffect(() => {
+    if (!isAuthenticated || !isDevClient) return;
+
+    let isMounted = true;
+    const subscriptions: { remove: () => void }[] = [];
+
+    (async () => {
+      try {
+        // Import dynamique : le module n'est JAMAIS chargé en Expo Go
+        const Notifications = await import('expo-notifications');
+        const { registerForPushNotificationsAsync, handleNotificationResponse } = await import('../src/lib/notifications');
+
+        if (!isMounted) return;
+
+        const token = await registerForPushNotificationsAsync();
+        if (token && isMounted) {
+          userAPI.updatePushToken(token).catch((err) => {
+            console.warn('[Push] Erreur synchronisation token backend:', err);
+          });
+        }
+
+        // Notification reçue en avant-plan
+        const notifSub = Notifications.addNotificationReceivedListener(() => {
+          queryClient.invalidateQueries({ queryKey: ['my-notifications'] });
+        });
+        subscriptions.push(notifSub);
+
+        // Clic sur une notification
+        const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
+          handleNotificationResponse(response);
+        });
+        subscriptions.push(responseSub);
+      } catch (err) {
+        // Silencieux : erreurs attendues en Expo Go ou si les permissions sont refusées
+        console.log('[Push] Notifications non disponibles dans cet environnement.');
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+      subscriptions.forEach((s) => s.remove());
+    };
+  }, [isAuthenticated]);
+
   if (!hydrated) {
     return null; // Ne pas rendre l'app tant que le state auth n'est pas hydraté
   }
@@ -92,6 +145,7 @@ export default function RootLayout() {
                 options={{ headerShown: false }}
               />
             </Stack>
+            <GlobalAudioPlayer />
             <CustomAlertProvider />
           </ToastProvider>
         </QueryClientProvider>

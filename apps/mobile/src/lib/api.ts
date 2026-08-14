@@ -52,11 +52,11 @@ api.interceptors.request.use(
       if (token) config.headers.Authorization = `Bearer ${token}`;
     } catch { }
     config.headers['X-Session-ID'] = getAnonymousSessionId();
-    console.log(`[AXIOS] Sending request to: ${config.url}`);
+    if (__DEV__) console.log(`[AXIOS] Sending request to: ${config.url}`);
     return config;
   },
   (error) => {
-    console.error(`[AXIOS] Request error:`, error);
+    if (__DEV__) console.error(`[AXIOS] Request error:`, error);
     return Promise.reject(error);
   }
 );
@@ -73,7 +73,7 @@ function processQueue(error: unknown, token: string | null = null) {
 
 api.interceptors.response.use(
   (response) => {
-    console.log(`[AXIOS] Received response from: ${response.config.url} (status: ${response.status})`);
+    if (__DEV__) console.log(`[AXIOS] Received response from: ${response.config.url} (status: ${response.status})`);
     if (response.data) {
       const originalData = rewriteUrlsInObject(response.data);
       
@@ -139,7 +139,7 @@ api.interceptors.response.use(
     }
 
     if (error.response?.status !== 401 && error.response?.status !== 403) {
-      console.error(`[AXIOS] Response error for ${error.config?.url}:`, error.message);
+      if (__DEV__) console.error(`[AXIOS] Response error for ${error.config?.url}:`, error.message);
     }
     return Promise.reject(error);
   }
@@ -160,7 +160,7 @@ export const authAPI = {
     api.post('/auth/logout', { refreshToken }),
   forgotPassword: (email: string) =>
     api.post('/auth/forgot-password', { email }),
-  resetPassword: (data: { token: string; password: string }) =>
+  resetPassword: (data: { email: string; otp: string; password: string }) =>
     api.post('/auth/reset-password', data),
 };
 
@@ -289,6 +289,13 @@ export const videosAPI = {
     api.post(`/videos/${id}/watch`, data),
   verifyAudioRights: (data: { trackId?: string; audioTitle?: string; videoS3Key?: string; videoUrl?: string; originalAudioName?: string; title?: string; description?: string }) =>
     api.post('/videos/verify-audio-rights', data, { timeout: 90000 }),
+  /**
+   * Vérification instantanée par hash SHA-256 du fichier (< 200ms).
+   * À appeler IMMÉDIATEMENT après la sélection du fichier vidéo, avant le pré-upload.
+   */
+  checkAudioHash: (data: { sha256Prefix: string; filename: string; fileSize: number }) =>
+    api.post('/videos/check-audio-hash', data, { timeout: 5000 }),
+
 };
 
 export const livesAPI = {
@@ -336,6 +343,7 @@ export const paymentsAPI = {
 export const userAPI = {
   getMe: () => api.get('/users/me'),
   updateProfile: (data: { name?: string; avatar?: string; phoneNumber?: string }) => api.put('/users/me', data),
+  updatePushToken: (token: string) => api.patch('/users/me/push-token', { token }),
   deleteAccount: (data: { password?: string; artistAction?: 'TRANSFER' | 'DELETE' }) => api.delete('/users/me', { data }),
   getPurchases: () => api.get('/users/me/purchases'),
   search: (q: string) => api.get('/users/search', { params: { q } }),

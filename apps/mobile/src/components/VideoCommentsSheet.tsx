@@ -1,5 +1,18 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, FlatList, Modal, TouchableWithoutFeedback } from 'react-native';
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
+  FlatList,
+  Modal,
+  TouchableWithoutFeedback,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,6 +42,7 @@ interface VideoCommentsSheetProps {
 
 export default function VideoCommentsSheet({ videoId, onClose, visible }: VideoCommentsSheetProps) {
   const { user } = useAuthStore();
+  const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   const [content, setContent] = useState('');
 
@@ -89,40 +103,41 @@ export default function VideoCommentsSheet({ videoId, onClose, visible }: VideoC
     >
       <View style={styles.modalOverlay}>
         <TouchableWithoutFeedback onPress={onClose}>
-          <View style={styles.backdrop} />
+          <View style={styles.backdropBackground} />
         </TouchableWithoutFeedback>
-        
-        <View style={styles.sheetContainer}>
-          <View style={styles.handleIndicator} />
-          <View style={styles.headerRow}>
-            <Text style={styles.title}>Commentaires</Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-              <Ionicons name="close" size={24} color="#FFF" />
-            </TouchableOpacity>
-          </View>
-          
-          {isLoading ? (
-            <View style={styles.center}>
-              <ActivityIndicator color="#06B6D4" />
-            </View>
-          ) : comments.length === 0 ? (
-            <View style={styles.center}>
-              <Text style={styles.emptyText}>Soyez le premier à commenter !</Text>
-            </View>
-          ) : (
-            <FlatList
-              data={comments}
-              keyExtractor={(item: Comment) => item.id}
-              renderItem={renderItem}
-              contentContainerStyle={styles.listContent}
-              keyboardShouldPersistTaps="handled"
-            />
-          )}
 
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          >
-            <View style={styles.inputContainer}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.keyboardAvoidingContainer}
+        >
+          <View style={styles.sheetContainer}>
+            <View style={styles.handleIndicator} />
+            <View style={styles.headerRow}>
+              <Text style={styles.title}>Commentaires</Text>
+              <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+                <Ionicons name="close" size={24} color="#FFF" />
+              </TouchableOpacity>
+            </View>
+
+            {isLoading ? (
+              <View style={styles.center}>
+                <ActivityIndicator color="#06B6D4" />
+              </View>
+            ) : comments.length === 0 ? (
+              <View style={styles.center}>
+                <Text style={styles.emptyText}>Soyez le premier à commenter !</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={comments}
+                keyExtractor={(item: Comment) => item.id}
+                renderItem={renderItem}
+                contentContainerStyle={styles.listContent}
+                keyboardShouldPersistTaps="handled"
+              />
+            )}
+
+            <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
               <TextInput
                 style={styles.input}
                 placeholder={user ? "Ajouter un commentaire..." : "Connectez-vous pour commenter"}
@@ -145,8 +160,8 @@ export default function VideoCommentsSheet({ videoId, onClose, visible }: VideoC
                 )}
               </TouchableOpacity>
             </View>
-          </KeyboardAvoidingView>
-        </View>
+          </View>
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   );
@@ -157,24 +172,29 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-end',
   },
-  backdrop: {
-    flex: 1,
+  backdropBackground: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
+  keyboardAvoidingContainer: {
+    width: '100%',
+    height: '75%',
+    maxHeight: '85%',
+  },
   sheetContainer: {
+    flex: 1,
     backgroundColor: '#141414',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    height: '75%', // Fixed height for the bottom sheet look
     paddingTop: 8,
   },
-  handleIndicator: { 
-    backgroundColor: '#333', 
-    width: 40, 
-    height: 4, 
-    borderRadius: 2, 
-    alignSelf: 'center', 
-    marginBottom: 8 
+  handleIndicator: {
+    backgroundColor: '#333',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 8,
   },
   headerRow: {
     flexDirection: 'row',
@@ -195,7 +215,7 @@ const styles = StyleSheet.create({
   },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { color: '#888', fontSize: 14 },
-  
+
   listContent: { padding: 16, paddingBottom: 20 },
   commentRow: { flexDirection: 'row', marginBottom: 16 },
   avatar: { width: 36, height: 36, borderRadius: 18, marginRight: 12 },
@@ -212,7 +232,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#222',
     backgroundColor: '#141414',
-    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
   },
   input: {
     flex: 1,

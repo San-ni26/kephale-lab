@@ -10,6 +10,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as VideoThumbnails from 'expo-video-thumbnails';
+import * as Crypto from 'expo-crypto';
 import { Ionicons } from '@expo/vector-icons';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { Audio } from 'expo-av';
@@ -22,6 +23,32 @@ import type { Track } from '@kephale/types';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const API_URL = process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl || 'http://localhost:4000';
+
+/**
+ * Calcule un hash SHA-256 des premiers 512 Ko du fichier.
+ * Utilisé pour une détection instantanée des copies exactes AVANT l'upload.
+ * Retourne null en cas d'erreur (le flux normal continue sans blocage).
+ */
+async function computeFilePrefixHash(uri: string): Promise<string | null> {
+  try {
+    // Lire les premiers 512 Ko en Base64
+    const MAX_BYTES = 512 * 1024;
+    const base64Chunk = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+      position: 0,
+      length: MAX_BYTES,
+    });
+    // Hacher la représentation Base64 (identifiant déterministe du début du fichier)
+    const hash = await Crypto.digestStringAsync(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      base64Chunk,
+      { encoding: Crypto.CryptoEncoding.BASE64 }
+    );
+    return hash;
+  } catch {
+    return null;
+  }
+}
 
 const getReachableUrl = (url: string) => {
   return rewriteUrl(url);
@@ -448,6 +475,39 @@ export default function CreateReelStudioScreen() {
         if (uri) setThumbnailUri(uri);
       })
       .catch(() => {});
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // PHASE 0 : Détection instantanée par hash SHA-256 (< 200ms)
+    // Calcule le hash des premiers 512 Ko et appelle /check-audio-hash en parallèle
+    // du pré-upload S3. Bloque immédiatement si le son est une copie exacte connue.
+    // ────────────────────────────────────────────────────────────────────────────
+    const fileSize = (asset as any).size ?? 0;
+    computeFilePrefixHash(asset.uri).then(async (sha256Prefix) => {
+      if (!sha256Prefix) return; // Hash impossible → continuer normalement
+      try {
+        const hashRes = await videosAPI.checkAudioHash({
+          sha256Prefix,
+          filename: asset.name,
+          fileSize,
+        });
+        const hashData = hashRes.data?.data;
+        if (hashData?.isKnown && !hashData?.isAuthorized) {
+          // Copie exacte d'un son protégé détectée AVANT l'upload
+          setIsVerifyingRights(false);
+          setRightsInfo({
+            isAuthorized: false,
+            rightsStatus: hashData.rightsStatus || 'REQUIRES_PURCHASE',
+            tokensRequired: hashData.matchedTrack?.price ? Math.ceil(hashData.matchedTrack.price / 10) : 0,
+            message: hashData.message,
+            matchedTrack: hashData.matchedTrack,
+            detectionMethod: 'FILE_HASH',
+          });
+        }
+        // Si autorisé ou inconnu → le pipeline normal (Chromaprint + AudD) prend le relais
+      } catch {
+        // Ignorer les erreurs réseau : la vérification complète se fait côté backend
+      }
+    }).catch(() => {});
 
     // Déclencher le pré-upload S3 en tâche de fond pour autoriser l'analyse acoustique Chromaprint
     setIsUploadingPreVideo(true);

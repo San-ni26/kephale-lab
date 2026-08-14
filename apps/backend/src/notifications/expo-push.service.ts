@@ -30,6 +30,31 @@ const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const EXPO_RECEIPTS_URL = 'https://exp.host/--/api/v2/push/getReceipts';
 const CHUNK_SIZE = 100;
 
+/**
+ * Construit les headers pour l'API Expo Push.
+ * EXPO_ACCESS_TOKEN est requis pour les apps publiées sur EAS.
+ * Sans ce token, Expo peut throttler les envois en production.
+ *
+ * Pour obtenir un token :
+ * 1. Se connecter sur https://expo.dev
+ * 2. Account Settings → Access Tokens → Create Token
+ * 3. Ajouter dans .env : EXPO_ACCESS_TOKEN=expo_...
+ */
+function getExpoPushHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Accept': 'application/json',
+    'Accept-Encoding': 'gzip, deflate',
+    'Content-Type': 'application/json',
+  };
+
+  const accessToken = process.env.EXPO_ACCESS_TOKEN;
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+
+  return headers;
+}
+
 function isValidExpoPushToken(token: string): boolean {
   return /^ExponentPushToken\[.+\]$/.test(token) || /^[a-zA-Z0-9_-]{20,}$/.test(token);
 }
@@ -51,11 +76,7 @@ export class ExpoPushService {
   private async sendChunk(messages: ExpoPushMessage[]): Promise<ExpoPushTicket[]> {
     const response = await fetch(EXPO_PUSH_URL, {
       method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'Accept-Encoding': 'gzip, deflate',
-        'Content-Type': 'application/json',
-      },
+      headers: getExpoPushHeaders(),
       body: JSON.stringify(messages),
     });
 

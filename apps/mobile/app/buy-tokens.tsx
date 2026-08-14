@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import * as WebBrowser from 'expo-web-browser';
+import { useStripe } from '@stripe/stripe-react-native';
 import { paymentsAPI, purchasesAPI } from '../src/lib/api';
 import { useAuthStore } from '../src/stores';
 import { CURRENCIES_CONFIG, formatCurrency } from '../src/lib/currency';
@@ -24,6 +25,7 @@ const CURRENCY_OPTIONS: { code: SupportedCurrency; label: string; symbol: string
 
 export default function BuyTokensScreen() {
   const { user, checkAuth } = useAuthStore();
+  const { initPaymentSheet, presentPaymentSheet } = useStripe();
   const [selectedCurrency, setSelectedCurrency] = useState<SupportedCurrency>('XOF');
   const [selectedPack, setSelectedPack] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -48,10 +50,58 @@ export default function BuyTokensScreen() {
         paymentProvider
       );
 
-      const paymentUrl = response.data?.paymentUrl || response.data?.data?.paymentUrl;
+      const resData = response.data?.data || response.data;
+
+      // 1. Cas Mode Simulation / Sandbox (mode développement sans provider configuré)
+      if (resData?.isFakeTest) {
+        await checkAuth();
+        Alert.alert(
+          'Recharge effectuée (Mode Test)',
+          `Votre compte a bien été crédité de ${resData.tokens} jetons.\n\nNouveau solde : ${resData.newBalance} Jetons.`,
+          [
+            {
+              text: 'Continuer',
+              onPress: () => router.back(),
+            },
+          ]
+        );
+        return;
+      }
+
+      // 2. Cas Stripe (Carte bancaire)
+      if (resData?.clientSecret) {
+        const { error: initError } = await initPaymentSheet({
+          paymentIntentClientSecret: resData.clientSecret,
+          merchantDisplayName: 'Kephale',
+          style: 'alwaysDark',
+        });
+
+        if (initError) {
+          throw new Error(initError.message);
+        }
+
+        const { error: presentError } = await presentPaymentSheet();
+        if (presentError) {
+          if (presentError.code === 'Canceled') {
+            return; // Annulation volontaire par l'utilisateur
+          }
+          throw new Error(presentError.message);
+        }
+
+        await checkAuth();
+        Alert.alert(
+          'Paiement validé !',
+          `Félicitations, votre recharge de ${resData.tokens || ''} jetons est confirmée.`,
+          [{ text: 'Super !', onPress: () => router.back() }]
+        );
+        return;
+      }
+
+      // 3. Cas CinetPay / Mobile Money (URL de paiement Web)
+      const paymentUrl = resData?.paymentUrl;
 
       if (!paymentUrl) {
-        throw new Error('Lien de paiement non reçu');
+        throw new Error(resData?.message || 'Lien de paiement non reçu');
       }
 
       const result = await WebBrowser.openAuthSessionAsync(
@@ -62,7 +112,7 @@ export default function BuyTokensScreen() {
       if (result.type === 'success' || result.type === 'dismiss') {
         Alert.alert(
           'Paiement initié',
-          'Votre compte sera crédité dès confirmation de la transaction.',
+          'Votre compte sera crédité dès confirmation de la transaction par votre opérateur Mobile Money.',
           [
             {
               text: 'Actualiser mon solde',
@@ -77,7 +127,10 @@ export default function BuyTokensScreen() {
       console.error('Erreur achat jetons:', err);
       Alert.alert(
         'Erreur',
-        err.response?.data?.message || 'Impossible d\'initialiser le paiement. Veuillez réessayer.'
+        err.response?.data?.error?.message ||
+          err.response?.data?.message ||
+          err.message ||
+          'Impossible d\'initialiser le paiement. Veuillez réessayer.'
       );
     } finally {
       setIsProcessing(false);

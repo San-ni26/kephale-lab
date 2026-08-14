@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Crypto from 'expo-crypto';
-import { uiPersistStorage } from '../lib/storage';
+import { offlinePersistStorage } from '../lib/storage';
 import type { Track, Video } from '@kephale/types';
 
 const getTracksAPI = () => require('../lib/api').tracksAPI;
@@ -457,7 +457,7 @@ export const useOfflineStore = create<OfflineState>()(
     }),
     {
       name: 'kephale-offline',
-      storage: createJSONStorage(() => uiPersistStorage),
+      storage: createJSONStorage(() => offlinePersistStorage),
       partialize: (state) => ({ downloads: state.downloads }),
       onRehydrateStorage: () => (state) => {
         if (state) {

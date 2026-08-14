@@ -3,6 +3,7 @@ import { Image } from 'expo-image';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Linking, Platform } from 'react-native';
 import { useAuthStore, usePlayerStore, useUIStore } from '../stores';
+import { clearAllMMKVStorage } from './storage';
 
 /**
  * Calcule la taille totale estimée du répertoire de cache en Mo
@@ -94,9 +95,10 @@ export async function clearEntireAppCache(options: {
     // 5. Nettoyer le stockage / Déconnexion si demandé
     if (clearAllStorage) {
       try {
+        clearAllMMKVStorage();
         await AsyncStorage.clear();
       } catch (e) {
-        console.warn('[CacheManager] Erreur vidage AsyncStorage:', e);
+        console.warn('[CacheManager] Erreur vidage stockage:', e);
       }
     }
 
