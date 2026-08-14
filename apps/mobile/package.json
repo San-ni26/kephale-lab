@@ -2,7 +2,7 @@
   "name": "@kephale/mobile",
   "version": "0.0.1",
   "private": true,
-  "main": "expo-router/entry",
+  "main": "./index.js",
   "scripts": {
     "postinstall": "node scripts/patch-expo-router.js && node scripts/patch-track-player.js",
     "predev": "node ../../scripts/update-ip.cjs",

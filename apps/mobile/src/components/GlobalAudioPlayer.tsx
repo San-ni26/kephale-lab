@@ -1,5 +1,27 @@
-import React, { useEffect } from 'react';
-import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
+/**
+ * GlobalAudioPlayer — react-native-track-player engine
+ *
+ * Remplace expo-av par react-native-track-player pour obtenir :
+ * - Notification de lecteur Android (play/pause/next/prev depuis la barre)
+ * - Contrôles sur l'écran de verrouillage iOS
+ * - Contrôles Bluetooth / écouteurs
+ * - Lecture réelle en arrière-plan même quand l'app est fermée
+ *
+ * Architecture :
+ * 1. TrackPlayer est initialisé une seule fois au démarrage (singleton).
+ * 2. Le Zustand PlayerStore reste la source de vérité côté UI.
+ * 3. Ce composant synchronise PlayerStore → TrackPlayer (charger/lire/pause).
+ * 4. Les events TrackPlayer → PlayerStore (fin de piste, avance auto, etc.).
+ */
+
+import { useEffect, useRef } from 'react';
+import TrackPlayer, {
+  Capability,
+  Event,
+  State,
+  useTrackPlayerEvents,
+  useProgress,
+} from 'react-native-track-player';
 import * as FileSystem from 'expo-file-system/legacy';
 import { usePlayerStore, useOfflineStore } from '../stores/index';
 import { tracksAPI, getDynamicApiUrl } from '../lib/api';
@@ -8,176 +30,220 @@ import { hapticFeedback } from '../lib/haptics';
 
 const API_URL = getDynamicApiUrl();
 
-// ── Global Singleton Sound Engine ─────────────────────────────────────────────
-// Prevents duplicate playback instances and race conditions across component mounts.
-let globalSound: Audio.Sound | null = null;
-let currentPlayingTrackId: string | null = null;
-let activeSessionId = 0;
-let isConfiguringAudioMode = false;
+// ── TrackPlayer singleton setup ───────────────────────────────────────────────
+let isTrackPlayerSetup = false;
 
-async function setupAudioMode() {
-  if (isConfiguringAudioMode) return;
-  isConfiguringAudioMode = true;
+async function setupTrackPlayer() {
+  if (isTrackPlayerSetup) return;
   try {
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      staysActiveInBackground: true,
-      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-      playsInSilentModeIOS: true,
-      shouldDuckAndroid: true,
-      interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-      playThroughEarpieceAndroid: false,
+    await TrackPlayer.setupPlayer({
+      // Buffer 60s pour une lecture fluide sur connexion lente
+      minBuffer: 15,
+      maxBuffer: 60,
+      playBuffer: 5,
+      backBuffer: 30,
     });
+
+    await TrackPlayer.updateOptions({
+      capabilities: [
+        Capability.Play,
+        Capability.Pause,
+        Capability.SkipToNext,
+        Capability.SkipToPrevious,
+        Capability.SeekTo,
+        Capability.Stop,
+      ],
+      compactCapabilities: [
+        Capability.Play,
+        Capability.Pause,
+        Capability.SkipToNext,
+        Capability.SkipToPrevious,
+      ],
+      // Android notification icon
+      notificationCapabilities: [
+        Capability.Play,
+        Capability.Pause,
+        Capability.SkipToNext,
+        Capability.SkipToPrevious,
+        Capability.SeekTo,
+      ],
+    });
+
+    isTrackPlayerSetup = true;
   } catch (err) {
-    console.warn('[GlobalAudioPlayer] Erreur configuration audio mode:', err);
+    // setupPlayer peut lever si déjà appelé — on ignore silencieusement
+    isTrackPlayerSetup = true;
   }
 }
 
-export default function GlobalAudioPlayer() {
-  const { currentTrack, isPlaying, setProgress, nextTrack } = usePlayerStore();
+// ── Build a TrackPlayer track object ─────────────────────────────────────────
+async function resolveTrackUri(track: any): Promise<string | null> {
+  const offlineItem = useOfflineStore.getState().downloads[track.id];
+  const rawAudioUrl = track.audioUrl || '';
 
+  let uri = offlineItem?.localFileUri
+    ? offlineItem.localFileUri
+    : rawAudioUrl.startsWith('http')
+    ? rawAudioUrl
+    : rawAudioUrl
+    ? `${API_URL}${rawAudioUrl}`
+    : '';
+
+  if (!uri) return null;
+
+  // Validate local file exists
+  if (uri.startsWith('file://')) {
+    try {
+      const info = await FileSystem.getInfoAsync(uri);
+      if (!info.exists) {
+        // Fallback to remote
+        uri = rawAudioUrl.startsWith('http') ? rawAudioUrl : `${API_URL}${rawAudioUrl}`;
+        if (!uri || uri.endsWith('/')) return null;
+      }
+    } catch {
+      // keep uri as-is
+    }
+  }
+
+  return rewriteUrl(uri);
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+export default function GlobalAudioPlayer() {
+  const { currentTrack, queue, isPlaying, setProgress, setPlaying, nextTrack } = usePlayerStore();
+  const prevTrackId = useRef<string | null>(null);
+  const { position, duration } = useProgress(250);
+
+  // Setup player once on mount
   useEffect(() => {
-    setupAudioMode();
+    setupTrackPlayer();
   }, []);
 
-  // Track change handler with session fencing
+  // Sync progress from TrackPlayer → Zustand
   useEffect(() => {
-    let cancelled = false;
-    const sessionId = ++activeSessionId;
+    if (duration > 0) {
+      setProgress(position, duration);
+    }
+  }, [position, duration]);
 
-    const loadAndPlayTrack = async () => {
-      // 1. If no track selected, stop and clean up everything
-      if (!currentTrack) {
-        currentPlayingTrackId = null;
-        if (globalSound) {
-          const soundToUnload = globalSound;
-          globalSound = null;
-          try {
-            await soundToUnload.stopAsync();
-            await soundToUnload.unloadAsync();
-          } catch {}
-        }
-        return;
-      }
+  // Track change: load & play new track in TrackPlayer
+  useEffect(() => {
+    if (!currentTrack) {
+      TrackPlayer.reset().catch(() => {});
+      prevTrackId.current = null;
+      return;
+    }
 
-      // 2. Avoid reloading if already playing this exact track
-      if (currentTrack.id === currentPlayingTrackId && globalSound) {
-        return;
-      }
+    if (currentTrack.id === prevTrackId.current) return;
 
-      console.log(`[GlobalAudioPlayer] Session #${sessionId} - Changement de morceau vers: ${currentTrack.id}`);
+    prevTrackId.current = currentTrack.id;
 
-      // 3. Immediately stop & unload previous sound before creating new one
-      if (globalSound) {
-        const soundToUnload = globalSound;
-        globalSound = null;
-        try {
-          await soundToUnload.stopAsync();
-          await soundToUnload.unloadAsync();
-        } catch {}
-      }
-
-      if (cancelled || sessionId !== activeSessionId) return;
-
+    (async () => {
       try {
-        // Resolve audio URI (offline first, then remote)
-        const offlineItem = useOfflineStore.getState().downloads[currentTrack.id];
-        const rawAudioUrl = currentTrack.audioUrl || '';
-        let uri = (offlineItem && offlineItem.localFileUri)
-          ? offlineItem.localFileUri
-          : (rawAudioUrl.startsWith('http') 
-            ? rawAudioUrl 
-            : rawAudioUrl 
-              ? `${API_URL}${rawAudioUrl}`
-              : '');
-
+        const uri = await resolveTrackUri(currentTrack);
         if (!uri) {
-          console.warn('[GlobalAudioPlayer] Aucune URL audio valide pour le morceau:', currentTrack.id);
+          console.warn('[GlobalAudioPlayer] No valid URI for track:', currentTrack.id);
           usePlayerStore.getState().clearPlayer();
           return;
         }
 
-        // Validate local file URI exists
-        if (uri.startsWith('file://')) {
-          const fileInfo = await FileSystem.getInfoAsync(uri);
-          if (!fileInfo.exists) {
-            console.warn('[GlobalAudioPlayer] Le fichier hors-ligne est introuvable sur le disque:', uri);
-            if (rawAudioUrl && !rawAudioUrl.startsWith('file://')) {
-              uri = rawAudioUrl.startsWith('http') ? rawAudioUrl : `${API_URL}${rawAudioUrl}`;
-            } else {
-              usePlayerStore.getState().clearPlayer();
-              return;
-            }
-          }
-        }
-
-        uri = rewriteUrl(uri);
-        console.log('[GlobalAudioPlayer] Chargement du son URI:', uri);
-
-        if (cancelled || sessionId !== activeSessionId) return;
-
-        // Create sound instance
-        const { sound } = await Audio.Sound.createAsync(
-          { uri },
-          {
-            shouldPlay: true,
-            progressUpdateIntervalMillis: 250,
-          },
-          (status) => {
-            if (status.isLoaded) {
-              setProgress(status.positionMillis / 1000, (status.durationMillis || 0) / 1000);
-              if (status.didJustFinish) {
-                nextTrack();
-              }
-            }
-          },
-          false // Progressive streaming
+        // Build the queue for TrackPlayer
+        const tpTracks = await Promise.all(
+          (queue.length > 0 ? queue : [currentTrack]).map(async (t) => {
+            const tUri = await resolveTrackUri(t);
+            const offlineItem = useOfflineStore.getState().downloads[t.id];
+            return {
+              id: t.id,
+              url: tUri || '',
+              title: t.title,
+              artist: t.artist?.stageName || t.artistName || 'Artiste',
+              album: t.album?.title || '',
+              artwork:
+                offlineItem?.localCoverUri ||
+                t.coverUrl ||
+                t.album?.coverUrl ||
+                undefined,
+              duration: t.duration,
+            };
+          })
         );
 
-        // If another track was requested while loading, abort this instance
-        if (cancelled || sessionId !== activeSessionId) {
-          sound.stopAsync().catch(() => {}).then(() => sound.unloadAsync().catch(() => {}));
-          return;
+        // Filter out tracks with no URL
+        const validTracks = tpTracks.filter((t) => t.url);
+
+        if (validTracks.length === 0) return;
+
+        await TrackPlayer.reset();
+        await TrackPlayer.add(validTracks);
+
+        // Jump to current track within queue
+        const currentIdx = validTracks.findIndex((t) => t.id === currentTrack.id);
+        if (currentIdx > 0) {
+          await TrackPlayer.skip(currentIdx);
         }
 
-        globalSound = sound;
-        currentPlayingTrackId = currentTrack.id;
-        hapticFeedback.medium().catch(() => {});
+        await TrackPlayer.play();
 
-        // Track play counter
+        // Track play count
         tracksAPI.play(currentTrack.id).catch(() => {});
-      } catch (error) {
-        console.error('[GlobalAudioPlayer] Erreur lors du chargement du morceau:', error);
-        currentPlayingTrackId = null;
+        hapticFeedback.medium().catch(() => {});
+      } catch (err) {
+        console.error('[GlobalAudioPlayer] Error loading track:', err);
         hapticFeedback.error().catch(() => {});
       }
-    };
-
-    loadAndPlayTrack();
-
-    return () => {
-      cancelled = true;
-    };
+    })();
   }, [currentTrack?.id]);
 
-  // Play / Pause toggle handler
+  // Play / Pause sync: Zustand → TrackPlayer
   useEffect(() => {
-    const syncPlayPause = async () => {
-      if (!globalSound) return;
+    if (!currentTrack) return;
+    (async () => {
       try {
-        const status = await globalSound.getStatusAsync();
-        if (status.isLoaded) {
-          if (isPlaying && !status.isPlaying) {
-            await globalSound.playAsync();
-          } else if (!isPlaying && status.isPlaying) {
-            await globalSound.pauseAsync();
-          }
+        const state = await TrackPlayer.getState();
+        if (isPlaying && state !== State.Playing) {
+          await TrackPlayer.play();
+        } else if (!isPlaying && state === State.Playing) {
+          await TrackPlayer.pause();
         }
       } catch {}
-    };
-
-    syncPlayPause();
+    })();
   }, [isPlaying]);
+
+  // TrackPlayer → Zustand: sync playback events
+  useTrackPlayerEvents(
+    [Event.PlaybackState, Event.PlaybackActiveTrackChanged, Event.PlaybackQueueEnded],
+    async (event) => {
+      if (event.type === Event.PlaybackState) {
+        const playing = event.state === State.Playing;
+        const zustandPlaying = usePlayerStore.getState().isPlaying;
+        if (playing !== zustandPlaying) {
+          setPlaying(playing);
+        }
+      }
+
+      if (event.type === Event.PlaybackActiveTrackChanged) {
+        // User changed track from notification (next/prev)
+        const tpTrack = await TrackPlayer.getActiveTrack();
+        if (!tpTrack?.id) return;
+
+        const zustandQueue = usePlayerStore.getState().queue;
+        const zustandCurrent = usePlayerStore.getState().currentTrack;
+
+        if (tpTrack.id !== zustandCurrent?.id) {
+          const newTrack = zustandQueue.find((t) => t.id === tpTrack.id);
+          if (newTrack) {
+            // Update Zustand without reloading TrackPlayer (it already changed)
+            prevTrackId.current = newTrack.id;
+            usePlayerStore.setState({ currentTrack: newTrack, isPlaying: true });
+          }
+        }
+      }
+
+      if (event.type === Event.PlaybackQueueEnded) {
+        usePlayerStore.getState().clearPlayer();
+      }
+    }
+  );
 
   return null;
 }

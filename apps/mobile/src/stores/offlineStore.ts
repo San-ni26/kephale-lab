@@ -460,37 +460,46 @@ export const useOfflineStore = create<OfflineState>()(
       storage: createJSONStorage(() => offlinePersistStorage),
       partialize: (state) => ({ downloads: state.downloads }),
       onRehydrateStorage: () => (state) => {
-        if (state) {
-          state.downloading = {};
-          const validDownloads: Record<string, OfflineItem> = {};
-          const now = Date.now();
+        if (!state) return;
 
-          const checks = Object.entries(state.downloads || {}).map(async ([id, item]) => {
-            // ── SÉCURITÉ : Vérification d'expiration ─────────────────────────
-            if (item.expiresAt && item.expiresAt < now) {
-              console.info(`[OfflineStore] Download expiré ignoré: ${id}`);
-              return; // Ne pas restaurer les fichiers expirés
-            }
+        // Always reset in-progress downloads on restart (they were interrupted)
+        state.downloading = {};
 
-            if (item.localFileUri) {
-              try {
-                const info = await FileSystem.getInfoAsync(item.localFileUri);
-                if (info.exists) {
-                  validDownloads[id] = item;
-                }
-              } catch (e) {
-                validDownloads[id] = item;
-              }
-            } else {
-              validDownloads[id] = item;
-            }
-          });
-
-          Promise.all(checks).then(() => {
-            useOfflineStore.setState({ downloads: validDownloads, downloading: {} });
-          });
+        // Filter out expired downloads synchronously
+        const now = Date.now();
+        const validDownloads: Record<string, OfflineItem> = {};
+        for (const [id, item] of Object.entries(state.downloads || {})) {
+          if (!item.expiresAt || item.expiresAt >= now) {
+            validDownloads[id] = item;
+          } else {
+            console.info(`[OfflineStore] Download expiré ignoré: ${id}`);
+          }
         }
-      }
+        state.downloads = validDownloads;
+
+        // Async file validation runs in the background after rehydration
+        // to clean up downloads whose files were deleted by the OS cache cleaner.
+        // Uses setState() to avoid blocking the first render.
+        Promise.all(
+          Object.entries(validDownloads).map(async ([id, item]) => {
+            if (!item.localFileUri) return [id, true] as const;
+            try {
+              const info = await FileSystem.getInfoAsync(item.localFileUri);
+              return [id, info.exists] as const;
+            } catch {
+              return [id, true] as const; // assume exists on error
+            }
+          })
+        ).then((results) => {
+          const stillValid: Record<string, OfflineItem> = {};
+          for (const [id, exists] of results) {
+            if (exists && validDownloads[id]) {
+              stillValid[id] = validDownloads[id];
+            }
+          }
+          useOfflineStore.setState({ downloads: stillValid, downloading: {} });
+        });
+      },
     }
   )
 );

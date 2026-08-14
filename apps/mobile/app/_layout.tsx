@@ -13,6 +13,8 @@ import { useOfflineStore } from '../src/stores/offlineStore';
 import { initGlobalSocket, disconnectGlobalSocket } from '../src/lib/socket';
 import { userAPI } from '../src/lib/api';
 import GlobalAudioPlayer from '../src/components/GlobalAudioPlayer';
+import { getAccessToken, getRefreshToken } from '../src/lib/secureStorage';
+
 
 // Push Notifications nécessitent un Development Client (pas supporté en Expo Go).
 // Constants.appOwnership === 'expo' dans Expo Go, absent en Dev Build / production.
@@ -36,25 +38,49 @@ export default function RootLayout() {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    const unsub = useAuthStore.persist.onFinishHydration(() => {
+    const unsub = useAuthStore.persist.onFinishHydration(async () => {
+      setHydrated(true);
+      const state = useAuthStore.getState();
+
+      // If MMKV didn't restore the tokens (e.g. after upgrade), bootstrap from SecureStore
+      if (!state.accessToken || !state.refreshToken) {
+        try {
+          const [secureAccess, secureRefresh] = await Promise.all([
+            getAccessToken(),
+            getRefreshToken(),
+          ]);
+          if (secureAccess && secureRefresh) {
+            useAuthStore.setState({
+              accessToken: secureAccess,
+              refreshToken: secureRefresh,
+              isAuthenticated: true,
+            });
+          }
+        } catch (e) {
+          console.warn('[Auth] Erreur lecture SecureStore:', e);
+        }
+      }
+
+      // Validate session with backend
+      const freshState = useAuthStore.getState();
+      if (freshState.isAuthenticated) {
+        freshState.checkAuth().catch(() => {});
+      }
+    });
+
+    const hasHydrated = useAuthStore.persist.hasHydrated();
+    if (hasHydrated) {
+      // Already hydrated (fast path — sync)
       setHydrated(true);
       const { isAuthenticated, checkAuth } = useAuthStore.getState();
       if (isAuthenticated) {
         checkAuth().catch(() => {});
       }
-    });
-    const hasHydrated = useAuthStore.persist.hasHydrated();
-    setHydrated(hasHydrated);
-    if (hasHydrated) {
-      const { isAuthenticated, checkAuth } = useAuthStore.getState();
-      if (isAuthenticated) {
-        checkAuth().catch(() => {});
-      }
     }
-    return () => {
-      unsub();
-    };
+
+    return () => { unsub(); };
   }, []);
+
 
   useEffect(() => {
     if (isAuthenticated && accessToken) {
