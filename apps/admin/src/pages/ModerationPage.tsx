@@ -1,6 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '../api';
 import { toast } from '../App';
+import {
+  ModerationIcon, SearchIcon, CheckCircleIcon, XCircleIcon,
+  PrevIcon, NextIcon, FileIcon, XIcon,
+} from '../icons';
 
 export default function ModerationPage() {
   const [data, setData] = useState<any>(null);
@@ -12,9 +16,8 @@ export default function ModerationPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      setData(await api.getCopyrightReports({ page, limit: 20, status: statusFilter || undefined }));
-    } catch (e: any) { toast.error(e.message); }
+    try { setData(await api.getCopyrightReports({ page, limit: 20, status: statusFilter || undefined })); }
+    catch (e: any) { toast.error(e.message); }
     finally { setLoading(false); }
   }, [page, statusFilter]);
 
@@ -24,10 +27,8 @@ export default function ModerationPage() {
     if (!resolveModal) return;
     try {
       await api.resolveCopyrightReport(resolveModal.id, action, adminNote || undefined);
-      toast.success(action === 'APPROVED' ? 'Signalement accepté ✅' : 'Signalement rejeté');
-      setResolveModal(null);
-      setAdminNote('');
-      load();
+      toast.success(action === 'APPROVED' ? 'Signalement accepté' : 'Signalement rejeté');
+      setResolveModal(null); setAdminNote(''); load();
     } catch (e: any) { toast.error(e.message); }
   };
 
@@ -49,44 +50,32 @@ export default function ModerationPage() {
 
       <div className="table-container">
         <div className="table-header">
-          <span className="table-title">Rapports de copyright ({data?.total ?? '…'})</span>
+          <span className="table-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <ModerationIcon size={14} /> Rapports de copyright ({data?.total ?? '…'})
+          </span>
         </div>
 
         {loading ? <div className="loading"><div className="spinner" /></div> : (
           <>
             <table>
-              <thead>
-                <tr>
-                  <th>Signaleur</th>
-                  <th>Contenu signalé</th>
-                  <th>Raison</th>
-                  <th>Statut</th>
-                  <th>Date</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
+              <thead><tr><th>Signaleur</th><th>Contenu signalé</th><th>Raison</th><th>Statut</th><th>Date</th><th>Actions</th></tr></thead>
               <tbody>
                 {data?.reports.map((r: any) => (
                   <tr key={r.id}>
+                    <td><div className="user-name">{r.reporter?.name}</div><div className="user-email">{r.reporter?.email}</div></td>
                     <td>
-                      <div className="user-name">{r.reporter?.name}</div>
-                      <div className="user-email">{r.reporter?.email}</div>
-                    </td>
-                    <td>
-                      {r.video && <div style={{ fontSize: 13 }}>🎬 {r.video.title}</div>}
-                      {r.track && <div style={{ fontSize: 13 }}>🎵 {r.track.title}</div>}
+                      {r.video && <div style={{ fontSize: 13 }}>Vidéo : {r.video.title}</div>}
+                      {r.track && <div style={{ fontSize: 13 }}>Piste : {r.track.title}</div>}
                     </td>
                     <td style={{ fontSize: 12, color: 'var(--text-secondary)', maxWidth: 200 }}>
-                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {r.reason || '—'}
-                      </div>
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.reason || '—'}</div>
                     </td>
                     <td>{statusBadge(r.status)}</td>
                     <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>{new Date(r.createdAt).toLocaleDateString('fr-FR')}</td>
                     <td>
                       {r.status === 'PENDING' && (
                         <button className="btn btn-ghost btn-sm" onClick={() => { setResolveModal(r); setAdminNote(''); }}>
-                          🔍 Examiner
+                          <SearchIcon size={14} /> Examiner
                         </button>
                       )}
                     </td>
@@ -98,8 +87,8 @@ export default function ModerationPage() {
               <div className="pagination">
                 <span className="pagination-info">Page {page}/{data.totalPages}</span>
                 <div className="pagination-controls">
-                  <button className="btn btn-ghost btn-sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>← Préc.</button>
-                  <button className="btn btn-ghost btn-sm" disabled={page === data.totalPages} onClick={() => setPage(p => p + 1)}>Suiv. →</button>
+                  <button className="btn btn-ghost btn-sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}><PrevIcon size={14} /></button>
+                  <button className="btn btn-ghost btn-sm" disabled={page === data.totalPages} onClick={() => setPage(p => p + 1)}><NextIcon size={14} /></button>
                 </div>
               </div>
             )}
@@ -110,7 +99,7 @@ export default function ModerationPage() {
       {resolveModal && (
         <div className="modal-backdrop" onClick={() => setResolveModal(null)}>
           <div className="modal" style={{ maxWidth: 520 }} onClick={e => e.stopPropagation()}>
-            <div className="modal-title">🔍 Examiner le signalement</div>
+            <div className="modal-title"><FileIcon size={16} /> Examiner le signalement</div>
             <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 13 }}>
               <div><strong>Signaleur :</strong> {resolveModal.reporter?.name} ({resolveModal.reporter?.email})</div>
               {resolveModal.video && <div style={{ marginTop: 6 }}><strong>Vidéo :</strong> {resolveModal.video.title}</div>}
@@ -119,18 +108,12 @@ export default function ModerationPage() {
             </div>
             <div className="form-group">
               <label className="form-label">Note interne (optionnel)</label>
-              <textarea
-                value={adminNote}
-                onChange={e => setAdminNote(e.target.value)}
-                placeholder="Note visible uniquement par les admins..."
-                rows={3}
-                style={{ width: '100%', resize: 'vertical' }}
-              />
+              <textarea value={adminNote} onChange={e => setAdminNote(e.target.value)} placeholder="Note visible uniquement par les admins..." rows={3} style={{ width: '100%', resize: 'vertical' }} />
             </div>
             <div className="modal-actions">
-              <button className="btn btn-ghost" onClick={() => setResolveModal(null)}>Annuler</button>
-              <button className="btn btn-danger" onClick={() => handleResolve('REJECTED')}>❌ Rejeter</button>
-              <button className="btn btn-success" onClick={() => handleResolve('APPROVED')}>✅ Accepter</button>
+              <button className="btn btn-ghost" onClick={() => setResolveModal(null)}><XIcon size={14} /> Annuler</button>
+              <button className="btn btn-danger" onClick={() => handleResolve('REJECTED')}><XCircleIcon size={14} /> Rejeter</button>
+              <button className="btn btn-success" onClick={() => handleResolve('APPROVED')}><CheckCircleIcon size={14} /> Accepter</button>
             </div>
           </div>
         </div>

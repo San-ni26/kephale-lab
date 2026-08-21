@@ -1,6 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '../api';
 import { toast } from '../App';
+import {
+  SearchIcon, MusicIcon, VideoIcon, DeleteIcon,
+  PrevIcon, NextIcon, CheckCircleIcon, XCircleIcon,
+} from '../icons';
 
 const STATUSES = ['DRAFT', 'PUBLISHED', 'ARCHIVED', 'FLAGGED'];
 const statusBadge = (s: string) => {
@@ -17,43 +21,42 @@ function TracksTab() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      setData(await api.getTracks({ page, limit: 20, search: search || undefined, status: status || undefined }));
-    } catch (e: any) { toast.error(e.message); }
+    try { setData(await api.getTracks({ page, limit: 20, search: search || undefined, status: status || undefined })); }
+    catch (e: any) { toast.error(e.message); }
     finally { setLoading(false); }
   }, [page, search, status]);
 
   useEffect(() => { load(); }, [load]);
 
   const updateStatus = async (id: string, newStatus: string) => {
-    try {
-      await api.updateTrackStatus(id, newStatus);
-      toast.success('Statut mis à jour');
-      load();
-    } catch (e: any) { toast.error(e.message); }
+    try { await api.updateTrackStatus(id, newStatus); toast.success('Statut mis à jour'); load(); }
+    catch (e: any) { toast.error(e.message); }
   };
 
   const deleteTrack = async (id: string, title: string) => {
     if (!confirm(`Supprimer "${title}" définitivement ?`)) return;
-    try {
-      await api.deleteTrack(id);
-      toast.success('Piste supprimée');
-      load();
-    } catch (e: any) { toast.error(e.message); }
+    try { await api.deleteTrack(id); toast.success('Piste supprimée'); load(); }
+    catch (e: any) { toast.error(e.message); }
   };
 
   return (
     <div>
       <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
-        <div className="search-bar">🔍<input placeholder="Chercher une piste..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} /></div>
+        <div className="search-bar">
+          <SearchIcon size={14} color="var(--text-muted)" />
+          <input placeholder="Chercher une piste..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
+        </div>
         <select value={status} onChange={e => { setStatus(e.target.value); setPage(1); }}>
           <option value="">Tous les statuts</option>
           {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
       </div>
-
       <div className="table-container">
-        <div className="table-header"><span className="table-title">Pistes ({data?.total ?? '…'})</span></div>
+        <div className="table-header">
+          <span className="table-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <MusicIcon size={14} /> Pistes ({data?.total ?? '…'})
+          </span>
+        </div>
         {loading ? <div className="loading"><div className="spinner" /></div> : (
           <>
             <table>
@@ -63,7 +66,7 @@ function TracksTab() {
                   <tr key={t.id}>
                     <td style={{ fontWeight: 500 }}>{t.title}</td>
                     <td style={{ color: 'var(--text-secondary)' }}>{t.artist?.stageName}</td>
-                    <td>{(t.playCount || 0).toLocaleString()}</td>
+                    <td>{(t.plays || 0).toLocaleString()}</td>
                     <td>{statusBadge(t.status)}</td>
                     <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>{new Date(t.createdAt).toLocaleDateString('fr-FR')}</td>
                     <td>
@@ -71,7 +74,7 @@ function TracksTab() {
                         <select value={t.status} onChange={e => updateStatus(t.id, e.target.value)} style={{ padding: '4px 8px', fontSize: 12 }}>
                           {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
-                        <button className="btn btn-danger btn-sm btn-icon" onClick={() => deleteTrack(t.id, t.title)}>🗑️</button>
+                        <button className="btn btn-danger btn-sm btn-icon" onClick={() => deleteTrack(t.id, t.title)}><DeleteIcon size={14} /></button>
                       </div>
                     </td>
                   </tr>
@@ -82,8 +85,8 @@ function TracksTab() {
               <div className="pagination">
                 <span className="pagination-info">{data.total} pistes • Page {page}/{data.totalPages}</span>
                 <div className="pagination-controls">
-                  <button className="btn btn-ghost btn-sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>← Préc.</button>
-                  <button className="btn btn-ghost btn-sm" disabled={page === data.totalPages} onClick={() => setPage(p => p + 1)}>Suiv. →</button>
+                  <button className="btn btn-ghost btn-sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}><PrevIcon size={14} /></button>
+                  <button className="btn btn-ghost btn-sm" disabled={page === data.totalPages} onClick={() => setPage(p => p + 1)}><NextIcon size={14} /></button>
                 </div>
               </div>
             )}
@@ -103,9 +106,8 @@ function VideosTab() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      setData(await api.getVideos({ page, limit: 20, search: search || undefined, status: status || undefined }));
-    } catch (e: any) { toast.error(e.message); }
+    try { setData(await api.getVideos({ page, limit: 20, search: search || undefined, status: status || undefined })); }
+    catch (e: any) { toast.error(e.message); }
     finally { setLoading(false); }
   }, [page, search, status]);
 
@@ -119,14 +121,21 @@ function VideosTab() {
   return (
     <div>
       <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
-        <div className="search-bar">🔍<input placeholder="Chercher une vidéo..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} /></div>
+        <div className="search-bar">
+          <SearchIcon size={14} color="var(--text-muted)" />
+          <input placeholder="Chercher une vidéo..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
+        </div>
         <select value={status} onChange={e => { setStatus(e.target.value); setPage(1); }}>
           <option value="">Tous les statuts</option>
           {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
       </div>
       <div className="table-container">
-        <div className="table-header"><span className="table-title">Vidéos ({data?.total ?? '…'})</span></div>
+        <div className="table-header">
+          <span className="table-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <VideoIcon size={14} /> Vidéos ({data?.total ?? '…'})
+          </span>
+        </div>
         {loading ? <div className="loading"><div className="spinner" /></div> : (
           <>
             <table>
@@ -136,7 +145,7 @@ function VideosTab() {
                   <tr key={v.id}>
                     <td style={{ fontWeight: 500 }}>{v.title}</td>
                     <td style={{ color: 'var(--text-secondary)' }}>{v.artist?.stageName}</td>
-                    <td>{(v.viewCount || 0).toLocaleString()}</td>
+                    <td>{(v.views || 0).toLocaleString()}</td>
                     <td>{statusBadge(v.status)}</td>
                     <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>{new Date(v.createdAt).toLocaleDateString('fr-FR')}</td>
                     <td>
@@ -152,8 +161,8 @@ function VideosTab() {
               <div className="pagination">
                 <span className="pagination-info">{data.total} vidéos • Page {page}/{data.totalPages}</span>
                 <div className="pagination-controls">
-                  <button className="btn btn-ghost btn-sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>← Préc.</button>
-                  <button className="btn btn-ghost btn-sm" disabled={page === data.totalPages} onClick={() => setPage(p => p + 1)}>Suiv. →</button>
+                  <button className="btn btn-ghost btn-sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}><PrevIcon size={14} /></button>
+                  <button className="btn btn-ghost btn-sm" disabled={page === data.totalPages} onClick={() => setPage(p => p + 1)}><NextIcon size={14} /></button>
                 </div>
               </div>
             )}
@@ -169,8 +178,12 @@ export default function ContentPage() {
   return (
     <div>
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border)', paddingBottom: 12 }}>
-        <button className={`btn ${tab === 'tracks' ? 'btn-primary' : 'btn-ghost'} btn-sm`} onClick={() => setTab('tracks')}>🎵 Pistes</button>
-        <button className={`btn ${tab === 'videos' ? 'btn-primary' : 'btn-ghost'} btn-sm`} onClick={() => setTab('videos')}>🎬 Vidéos</button>
+        <button className={`btn ${tab === 'tracks' ? 'btn-primary' : 'btn-ghost'} btn-sm`} onClick={() => setTab('tracks')}>
+          <MusicIcon size={14} /> Pistes
+        </button>
+        <button className={`btn ${tab === 'videos' ? 'btn-primary' : 'btn-ghost'} btn-sm`} onClick={() => setTab('videos')}>
+          <VideoIcon size={14} /> Vidéos
+        </button>
       </div>
       {tab === 'tracks' ? <TracksTab /> : <VideosTab />}
     </div>

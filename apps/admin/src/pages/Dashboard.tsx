@@ -1,15 +1,25 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import {
+  UsersIcon, ArtistsIcon, ContentIcon, FinanceIcon, ZapIcon,
+  TrendingUpIcon, MusicIcon, VideoIcon, WarningIcon, StarIcon,
+  ArrowUpIcon, ArrowDownIcon, ActivityIcon,
+} from '../icons';
 
-function StatCard({ icon, value, label, sub, color = 'purple' }: {
-  icon: string; value: string | number; label: string; sub?: string; color?: string;
+function StatCard({ icon: Icon, value, label, sub, subUp, color = 'purple' }: {
+  icon: React.ElementType; value: string | number; label: string;
+  sub?: string; subUp?: boolean; color?: string;
 }) {
   return (
     <div className={`stat-card ${color}`}>
-      <div className="stat-icon">{icon}</div>
+      <div className="stat-icon"><Icon size={20} /></div>
       <div className="stat-value">{typeof value === 'number' ? value.toLocaleString('fr-FR') : value}</div>
       <div className="stat-label">{label}</div>
-      {sub && <div className="stat-change up">↑ {sub}</div>}
+      {sub && (
+        <div className={`stat-change ${subUp ? 'up' : 'down'}`}>
+          {subUp ? <ArrowUpIcon size={11} /> : <ArrowDownIcon size={11} />} {sub}
+        </div>
+      )}
     </div>
   );
 }
@@ -27,38 +37,32 @@ export default function Dashboard() {
   }, []);
 
   if (loading) return <div className="loading"><div className="spinner" /> Chargement...</div>;
-  if (!stats) return <div className="empty-state"><div className="empty-icon">❌</div><p>Impossible de charger les statistiques</p></div>;
+  if (!stats) return <div className="empty-state"><WarningIcon size={40} style={{ opacity: 0.4 }} /><p>Impossible de charger les statistiques</p></div>;
 
   return (
     <div>
-      {/* Stats Grid */}
       <div className="stats-grid">
-        <StatCard icon="👥" value={stats.users.total} label="Utilisateurs" sub={`+${stats.users.newThisMonth} ce mois`} color="purple" />
-        <StatCard icon="🎤" value={stats.artists.total} label="Artistes actifs" color="orange" />
-        <StatCard icon="🎵" value={stats.content.tracks} label="Pistes" color="blue" />
-        <StatCard icon="🎬" value={stats.content.videos} label="Vidéos" color="green" />
-        <StatCard icon="💰" value={`${stats.finance.revenueThisMonthFcfa.toLocaleString()} FCFA`} label="Revenus ce mois" sub={`${stats.finance.revenueGrowthPct > 0 ? '+' : ''}${stats.finance.revenueGrowthPct}%`} color="green" />
-        <StatCard icon="⭐" value={stats.finance.activeSubscriptions} label="Abonnés premium" color="yellow" />
-        <StatCard icon="⏳" value={stats.artists.pendingWithdrawals} label="Retraits en attente" color="red" />
-        <StatCard icon="🛡️" value={stats.moderation.pendingCopyrightReports} label="Rapports copyright" color="red" />
+        <StatCard icon={UsersIcon}      value={stats.users.total}                   label="Utilisateurs"        sub={`+${stats.users.newThisMonth} ce mois`} subUp color="purple" />
+        <StatCard icon={ArtistsIcon}    value={stats.artists.total}                 label="Artistes actifs"     color="orange" />
+        <StatCard icon={MusicIcon}      value={stats.content.tracks}                label="Pistes"              color="blue" />
+        <StatCard icon={VideoIcon}      value={stats.content.videos}                label="Vidéos"              color="green" />
+        <StatCard icon={FinanceIcon}    value={`${stats.finance.revenueThisMonthFcfa.toLocaleString()} FCFA`} label="Revenus ce mois" sub={`${stats.finance.revenueGrowthPct > 0 ? '+' : ''}${stats.finance.revenueGrowthPct}%`} subUp={stats.finance.revenueGrowthPct > 0} color="green" />
+        <StatCard icon={StarIcon}       value={stats.finance.activeSubscriptions}   label="Abonnés premium"     color="yellow" />
+        <StatCard icon={ActivityIcon}   value={stats.artists.pendingWithdrawals}    label="Retraits en attente" color="red" />
+        <StatCard icon={WarningIcon}    value={stats.moderation.pendingCopyrightReports} label="Rapports copyright" color="red" />
       </div>
 
-      {/* Top Content */}
       {topContent && (
         <div className="grid-3" style={{ marginBottom: 24 }}>
           {/* Top Tracks */}
           <div className="table-container">
             <div className="table-header">
-              <span className="table-title">🎵 Top Pistes</span>
+              <span className="table-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <MusicIcon size={14} /> Top Pistes
+              </span>
             </div>
             <table>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Titre</th>
-                  <th>Écoutes</th>
-                </tr>
-              </thead>
+              <thead><tr><th>#</th><th>Titre</th><th>Écoutes</th></tr></thead>
               <tbody>
                 {topContent.topTracks.slice(0, 5).map((t: any, i: number) => (
                   <tr key={t.id}>
@@ -77,25 +81,18 @@ export default function Dashboard() {
           {/* Top Artists */}
           <div className="table-container">
             <div className="table-header">
-              <span className="table-title">🎤 Top Artistes</span>
+              <span className="table-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <ArtistsIcon size={14} /> Top Artistes
+              </span>
             </div>
             <table>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Artiste</th>
-                  <th>Followers</th>
-                </tr>
-              </thead>
+              <thead><tr><th>#</th><th>Artiste</th><th>Followers</th></tr></thead>
               <tbody>
                 {topContent.topArtists.slice(0, 5).map((a: any, i: number) => (
                   <tr key={a.id}>
                     <td style={{ color: 'var(--text-muted)', width: 30 }}>{i + 1}</td>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontWeight: 500, fontSize: 13 }}>{a.stageName}</span>
-                        {a.isVerified && <span title="Vérifié">✅</span>}
-                      </div>
+                    <td style={{ fontWeight: 500, fontSize: 13 }}>
+                      {a.stageName} {a.isVerified && <span style={{ color: 'var(--green)' }}>✓</span>}
                     </td>
                     <td><span className="badge badge-purple">{(a.totalFollowers || 0).toLocaleString()}</span></td>
                   </tr>
@@ -107,16 +104,12 @@ export default function Dashboard() {
           {/* Top Videos */}
           <div className="table-container">
             <div className="table-header">
-              <span className="table-title">🎬 Top Vidéos</span>
+              <span className="table-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <VideoIcon size={14} /> Top Vidéos
+              </span>
             </div>
             <table>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Titre</th>
-                  <th>Vues</th>
-                </tr>
-              </thead>
+              <thead><tr><th>#</th><th>Titre</th><th>Vues</th></tr></thead>
               <tbody>
                 {topContent.topVideos.slice(0, 5).map((v: any, i: number) => (
                   <tr key={v.id}>

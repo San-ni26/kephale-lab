@@ -9,6 +9,13 @@ import FinancePage from './pages/FinancePage';
 import ModerationPage from './pages/ModerationPage';
 import BroadcastPage from './pages/BroadcastPage';
 import SystemPage from './pages/SystemPage';
+import AdsPage from './pages/AdsPage';
+
+import {
+  DashboardIcon, UsersIcon, ArtistsIcon, ContentIcon, FinanceIcon,
+  ModerationIcon, BroadcastIcon, SystemIcon, AdsIcon,
+  RefreshIcon, LogoutIcon, ZapIcon,
+} from './icons';
 
 // ── Toast system ──────────────────────────────────────────────────────────────
 type Toast = { id: number; type: 'success' | 'error' | 'info'; message: string };
@@ -23,25 +30,27 @@ export const toast = {
 
 // ── Nav Items ─────────────────────────────────────────────────────────────────
 const NAV = [
-  { id: 'dashboard', label: 'Tableau de bord', icon: '📊', section: 'Vue d\'ensemble' },
-  { id: 'users', label: 'Utilisateurs', icon: '👥', section: 'Gestion' },
-  { id: 'artists', label: 'Artistes', icon: '🎤', section: 'Gestion' },
-  { id: 'content', label: 'Contenu', icon: '🎵', section: 'Gestion' },
-  { id: 'finance', label: 'Finances', icon: '💰', section: 'Business' },
-  { id: 'moderation', label: 'Modération', icon: '🛡️', section: 'Business' },
-  { id: 'broadcast', label: 'Notifications', icon: '📣', section: 'Business' },
-  { id: 'system', label: 'Système', icon: '⚙️', section: 'Admin' },
+  { id: 'dashboard', label: 'Tableau de bord', Icon: DashboardIcon, section: 'Vue d\'ensemble' },
+  { id: 'users',     label: 'Utilisateurs',     Icon: UsersIcon,    section: 'Gestion' },
+  { id: 'artists',   label: 'Artistes',          Icon: ArtistsIcon,  section: 'Gestion' },
+  { id: 'content',   label: 'Contenu',           Icon: ContentIcon,  section: 'Gestion' },
+  { id: 'finance',   label: 'Finances',          Icon: FinanceIcon,  section: 'Business' },
+  { id: 'ads',       label: 'Studio Pub',        Icon: AdsIcon,      section: 'Business' },
+  { id: 'moderation',label: 'Modération',        Icon: ModerationIcon,section: 'Business' },
+  { id: 'broadcast', label: 'Notifications',     Icon: BroadcastIcon,section: 'Business' },
+  { id: 'system',    label: 'Système',           Icon: SystemIcon,   section: 'Admin' },
 ];
 
 const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
-  dashboard: { title: 'Tableau de bord', subtitle: 'Vue d\'ensemble de la plateforme' },
-  users: { title: 'Utilisateurs', subtitle: 'Gestion des comptes' },
-  artists: { title: 'Artistes', subtitle: 'Profils et vérifications' },
-  content: { title: 'Contenu', subtitle: 'Modération des pistes et vidéos' },
-  finance: { title: 'Finances', subtitle: 'Retraits, achats et abonnements' },
-  moderation: { title: 'Modération', subtitle: 'Rapports de copyright' },
-  broadcast: { title: 'Notifications', subtitle: 'Envoi de messages groupés' },
-  system: { title: 'Système', subtitle: 'Santé et configuration' },
+  dashboard:  { title: 'Tableau de bord',  subtitle: 'Vue d\'ensemble de la plateforme' },
+  users:      { title: 'Utilisateurs',     subtitle: 'Gestion des comptes' },
+  artists:    { title: 'Artistes',         subtitle: 'Profils et vérifications' },
+  content:    { title: 'Contenu',          subtitle: 'Modération des pistes et vidéos' },
+  finance:    { title: 'Finances',         subtitle: 'Retraits, achats et abonnements' },
+  ads:        { title: 'Studio Publicitaire', subtitle: 'Annonceurs, campagnes et performances' },
+  moderation: { title: 'Modération',       subtitle: 'Rapports de copyright' },
+  broadcast:  { title: 'Notifications',    subtitle: 'Envoi de messages groupés' },
+  system:     { title: 'Système',          subtitle: 'Santé et configuration' },
 };
 
 function groupBy<T>(arr: T[], key: (item: T) => string) {
@@ -62,14 +71,12 @@ export default function App() {
 
   _setToasts = setToasts;
 
-  // Auto-dismiss toasts
   useEffect(() => {
     if (toasts.length === 0) return;
     const timer = setTimeout(() => setToasts(p => p.slice(1)), 3500);
     return () => clearTimeout(timer);
   }, [toasts]);
 
-  // Load badges
   const loadBadges = useCallback(async () => {
     if (!token) return;
     try {
@@ -107,26 +114,36 @@ export default function App() {
 
   const renderPage = () => {
     switch (page) {
-      case 'dashboard': return <Dashboard />;
-      case 'users': return <UsersPage />;
-      case 'artists': return <ArtistsPage />;
-      case 'content': return <ContentPage />;
-      case 'finance': return <FinancePage />;
+      case 'dashboard':  return <Dashboard />;
+      case 'users':      return <UsersPage />;
+      case 'artists':    return <ArtistsPage />;
+      case 'content':    return <ContentPage />;
+      case 'finance':    return <FinancePage />;
+      case 'ads':        return <AdsPage />;
       case 'moderation': return <ModerationPage />;
-      case 'broadcast': return <BroadcastPage />;
-      case 'system': return <SystemPage />;
-      default: return <Dashboard />;
+      case 'broadcast':  return <BroadcastPage />;
+      case 'system':     return <SystemPage />;
+      default:           return <Dashboard />;
     }
   };
 
   const initials = user?.name?.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2) || 'AD';
+
+  const toastIcon = (type: string) => {
+    if (type === 'success') return <CheckIcon size={14} />;
+    if (type === 'error')   return <XIcon size={14} />;
+    return <InfoIcon size={14} />;
+  };
 
   return (
     <div className="layout">
       {/* Sidebar */}
       <aside className="sidebar">
         <div className="sidebar-logo">
-          <h1>⚡ Kephale</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <ZapIcon size={20} color="var(--orange)" />
+            <h1>Kephale</h1>
+          </div>
           <span>Administration</span>
         </div>
 
@@ -134,16 +151,16 @@ export default function App() {
           {Object.entries(grouped).map(([section, items]) => (
             <div key={section}>
               <div className="nav-section-label">{section}</div>
-              {items.map(item => (
+              {items.map(({ id, label, Icon }) => (
                 <button
-                  key={item.id}
-                  className={`nav-item ${page === item.id ? 'active' : ''}`}
-                  onClick={() => setPage(item.id)}
+                  key={id}
+                  className={`nav-item ${page === id ? 'active' : ''}`}
+                  onClick={() => setPage(id)}
                 >
-                  <span className="nav-icon">{item.icon}</span>
-                  {item.label}
-                  {badges[item.id] > 0 && (
-                    <span className="nav-badge">{badges[item.id]}</span>
+                  <span className="nav-icon"><Icon size={16} /></span>
+                  {label}
+                  {badges[id] > 0 && (
+                    <span className="nav-badge">{badges[id]}</span>
                   )}
                 </button>
               ))}
@@ -159,7 +176,7 @@ export default function App() {
               <div className="admin-role">ADMIN</div>
             </div>
             <button className="btn btn-ghost btn-sm btn-icon" onClick={handleLogout} title="Se déconnecter">
-              🚪
+              <LogoutIcon size={15} />
             </button>
           </div>
         </div>
@@ -177,7 +194,7 @@ export default function App() {
               className="btn btn-ghost btn-sm"
               onClick={() => { loadBadges(); toast.info('Données actualisées'); }}
             >
-              🔄 Actualiser
+              <RefreshIcon size={14} /> Actualiser
             </button>
           </div>
         </header>
@@ -191,11 +208,13 @@ export default function App() {
       <div className="toast-container">
         {toasts.map(t => (
           <div key={t.id} className={`toast ${t.type}`}>
-            {t.type === 'success' ? '✅' : t.type === 'error' ? '❌' : 'ℹ️'}
-            {t.message}
+            {toastIcon(t.type)} {t.message}
           </div>
         ))}
       </div>
     </div>
   );
 }
+
+// local icon imports for toast
+import { CheckIcon, XIcon, InfoIcon } from './icons';
