@@ -9,6 +9,7 @@ import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import helmet from 'helmet';
 import compression from 'compression';
+import express from 'express';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -18,6 +19,11 @@ async function bootstrap() {
   // ── HTTP Response Compression (Gzip / Deflate) ───────────────────────────
   // Réduit la taille des réponses JSON API de 70% à 90% sur le réseau mobile
   app.use(compression());
+
+  // ── Body Size Limits (anti-DoS) ───────────────────────────────────────────
+  // Empêche les attaques DoS via des payloads JSON volumineux
+  app.use(express.json({ limit: '1mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
   // ── Security Headers (Helmet) ─────────────────────────────────────────────
   app.use(

@@ -279,8 +279,8 @@ export class ArtistsService {
       600
     );
 
-    // In a production environment, send via Email (Resend/SendGrid) or SMS (Twilio)
-    console.log(`[SECURITY] OTP de retrait généré pour ${user.email} (${user.artistProfile.stageName}): ${otp}`);
+    // TODO: envoyer l'OTP par email (Resend) ou SMS (Twilio) — ne JAMAIS logger un OTP financier
+
 
     return {
       success: true,

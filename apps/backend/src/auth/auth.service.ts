@@ -203,7 +203,10 @@ export class AuthService {
       include: { artistProfile: true, subscription: true },
     });
 
+    // SECURITY: Constant-time check even when user doesn't exist
+    // Prevents email enumeration via timing differences (OWASP A07)
     if (!user || !user.password) {
+      await bcrypt.compare(data.password, '$2b$10$dummyhashfortimingconstancyXXXXXXXXXXXXXXXXXXXXXXXXX');
       throw new UnauthorizedException('Adresse email ou mot de passe incorrect.');
     }
 

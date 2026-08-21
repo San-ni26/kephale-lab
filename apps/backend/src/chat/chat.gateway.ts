@@ -24,12 +24,14 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
       
-      const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { userId: string };
+      const secret = process.env.JWT_SECRET;
+      if (!secret) throw new Error('JWT_SECRET not configured');
+      const decoded = jwt.verify(token, secret) as { userId: string };
       this.connectedUsers.set(client.id, decoded.userId);
       
       // Join a room specific to the user for direct messages
       client.join(`user_${decoded.userId}`);
-      console.log(`Client connected: ${client.id} (User: ${decoded.userId})`);
+      // Ne pas logger le userId — information personnelle inutile dans les logs
     } catch (e) {
       client.disconnect();
     }

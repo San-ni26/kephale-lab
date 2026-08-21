@@ -102,7 +102,10 @@ export class LivesController {
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.split(' ')[1];
-        const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { userId: string };
+        const secret = process.env.JWT_SECRET;
+        if (!secret) throw new Error('JWT_SECRET not configured');
+        const decoded = jwt.verify(token, secret) as { userId: string };
+
         userId = decoded.userId;
       }
     } catch {}

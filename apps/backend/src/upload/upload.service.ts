@@ -19,7 +19,8 @@ const ALLOWED_MIME_TYPES: Record<string, string[]> = {
   ],
   image: [
     'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
-    'image/svg+xml', 'image/heic', 'image/heif', 'image/avif', 'image/bmp',
+    // Note: image/svg+xml intentionally excluded — SVG can contain JavaScript (XSS risk)
+    'image/heic', 'image/heif', 'image/avif', 'image/bmp',
   ],
   document: [
     'application/pdf', 'application/msword',

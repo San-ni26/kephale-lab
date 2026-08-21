@@ -45,7 +45,10 @@ export class LivesGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
 
-      const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { userId: string };
+      const secret = process.env.JWT_SECRET;
+      if (!secret) throw new Error('JWT_SECRET not configured');
+      const decoded = jwt.verify(token, secret) as { userId: string };
+
       client.userId = decoded.userId;
 
       const user = await this.prisma.user.findUnique({
