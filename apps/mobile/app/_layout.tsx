@@ -12,6 +12,7 @@ import { useAuthStore } from '../src/stores';
 import { useOfflineStore } from '../src/stores/offlineStore';
 import { initGlobalSocket, disconnectGlobalSocket } from '../src/lib/socket';
 import { userAPI } from '../src/lib/api';
+import { fetchAdMobConfig } from '../src/lib/ads';
 import GlobalAudioPlayer from '../src/components/GlobalAudioPlayer';
 import { getAccessToken, getRefreshToken } from '../src/lib/secureStorage';
 
@@ -40,6 +41,8 @@ export default function RootLayout() {
   useEffect(() => {
     const unsub = useAuthStore.persist.onFinishHydration(async () => {
       setHydrated(true);
+      // Fetch live AdMob config from admin backend (fire-and-forget)
+      fetchAdMobConfig().catch(() => {});
       const state = useAuthStore.getState();
 
       // If MMKV didn't restore the tokens (e.g. after upgrade), bootstrap from SecureStore

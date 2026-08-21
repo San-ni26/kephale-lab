@@ -30,5 +30,7 @@ apps/mobile/jdk.tar.gz
 apps/mobile/eas_*
 *.MP4
 *.mp4
+*.apk
+*.aab
 test-audio-fingerprint.mjs
 

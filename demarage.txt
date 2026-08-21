@@ -104,9 +104,18 @@ npm run start:dev # ou npm run start
 cd apps/mobile
 npm run dev
 
-# Remarque : Détecte aussi l'IP locale automatiquement.
-# → Scanner le QR code avec l'app Expo Go sur ton téléphone
-# → Télécharger Expo Go : https://expo.dev/client
+# ⚠️  EXPO GO NE FONCTIONNE PLUS
+# L'app utilise react-native-track-player (module natif) → incompatible Expo Go.
+# Il faut utiliser un Development Build :
+#
+# OPTION A — Dev Build déjà installé (recommandé)
+#   1. Installer l'APK preview depuis : https://expo.dev/accounts/paulkone/projects/kephale/builds
+#   2. Lancer : npx expo start --dev-client
+#   3. Ouvrir l'APK Kephale sur le téléphone (pas Expo Go)
+#
+# OPTION B — Compiler un dev build avec hot reload
+#   npx eas-cli build --platform android --profile development --non-interactive
+#   (puis installer le nouveau APK et utiliser npx expo start --dev-client)
 
 # ───────────────────────────────────────────────────────────────
 # SERVICES DISPONIBLES (avec Docker)
@@ -129,9 +138,21 @@ Mot de passe : KephaleAdmin2026! (sera modifiable)
 Rôle : ADMIN
 
 
+cd apps/admin && npm run dev
+# → http://localhost:5173
+
+🌐 URL	http://localhost:5173
+📧 Email	admin@kephale.com
+🔑 Mot de passe	KephaleAdmin2026!
 
 
-
+Pour activer les vraies pubs en production
+Créer un compte sur apps.admob.com
+Créer l'app "Kephale" (Android + iOS)
+Créer des blocs d'annonces pour chaque type
+Aller dans Admin → Studio Pub → Google AdMob
+Coller les IDs et activer l'interrupteur
+Reconstruire l'APK avec npm run build:android
 
 
 

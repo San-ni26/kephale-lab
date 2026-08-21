@@ -104,6 +104,17 @@ export class AdsController {
   }
 
   /**
+   * GET /ads/admob-config  (PUBLIC — no auth required)
+   * Returns active Google AdMob unit IDs for the mobile app to consume at runtime.
+   * If isEnabled=false, the app should fall back to env var defaults.
+   */
+  @Get('admob-config')
+  async getAdMobConfig() {
+    const data = await this.adsService.getAdMobConfig();
+    return { success: true, data };
+  }
+
+  /**
    * Deep analytics report for a user-owned campaign
    * GET /ads/my-analytics/:id
    */

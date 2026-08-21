@@ -898,4 +898,102 @@ export class AdsService {
       averageCtr,
     };
   }
+
+  // ─── GOOGLE ADMOB CONFIG ──────────────────────────────────────────────────────
+
+  private readonly ADMOB_CACHE_KEY = 'admin:admob:config';
+
+  /**
+   * Get the current AdMob configuration stored in Redis
+   * This is the public endpoint used by the mobile app to get live AdMob unit IDs
+   */
+  async getAdMobConfig() {
+    const cached = await this.cacheService.get<any>(this.ADMOB_CACHE_KEY);
+    if (cached) return cached;
+
+    // Return default test IDs if no config saved yet
+    return this.getDefaultAdMobConfig();
+  }
+
+  /**
+   * Save AdMob configuration to Redis (persisted, no TTL)
+   * Called by admin to update production AdMob unit IDs
+   */
+  async saveAdMobConfig(config: AdMobConfigInput) {
+    const saved = {
+      ...config,
+      updatedAt: new Date().toISOString(),
+    };
+    // TTL=0 means no expiry (persist forever)
+    await this.cacheService.set(this.ADMOB_CACHE_KEY, saved, 0);
+    return saved;
+  }
+
+  /**
+   * Reset to Google test Ad Unit IDs
+   */
+  async resetAdMobConfig() {
+    const defaultConfig = this.getDefaultAdMobConfig();
+    await this.cacheService.set(this.ADMOB_CACHE_KEY, defaultConfig, 0);
+    return defaultConfig;
+  }
+
+  private getDefaultAdMobConfig(): AdMobConfigDto {
+    return {
+      isEnabled: false,
+      android: {
+        appId: 'ca-app-pub-3940256099942544~3347511713', // Test App ID
+        banner:        'ca-app-pub-3940256099942544/6300978111',
+        interstitial:  'ca-app-pub-3940256099942544/8691691433',
+        rewarded:      'ca-app-pub-3940256099942544/5224354917',
+        rewardedInterstitial: 'ca-app-pub-3940256099942544/5354046379',
+        native:        'ca-app-pub-3940256099942544/2247696110',
+        appOpen:       'ca-app-pub-3940256099942544/9257395921',
+      },
+      ios: {
+        appId: 'ca-app-pub-3940256099942544~1458002511', // Test App ID
+        banner:        'ca-app-pub-3940256099942544/2934735716',
+        interstitial:  'ca-app-pub-3940256099942544/5135589807',
+        rewarded:      'ca-app-pub-3940256099942544/1712485313',
+        rewardedInterstitial: 'ca-app-pub-3940256099942544/6978759866',
+        native:        'ca-app-pub-3940256099942544/3986624511',
+        appOpen:       'ca-app-pub-3940256099942544/5575463023',
+      },
+      placements: {
+        feedBanner:           true,
+        reelInterstitial:     true,
+        trackDetailBanner:    true,
+        afterSongRewarded:    false,
+        appOpenOnLaunch:      false,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+  }
 }
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+export interface AdMobPlatformConfig {
+  appId: string;
+  banner: string;
+  interstitial: string;
+  rewarded: string;
+  rewardedInterstitial: string;
+  native: string;
+  appOpen: string;
+}
+
+export interface AdMobConfigDto {
+  isEnabled: boolean;
+  android: AdMobPlatformConfig;
+  ios: AdMobPlatformConfig;
+  placements: {
+    feedBanner: boolean;
+    reelInterstitial: boolean;
+    trackDetailBanner: boolean;
+    afterSongRewarded: boolean;
+    appOpenOnLaunch: boolean;
+  };
+  updatedAt: string;
+}
+
+export type AdMobConfigInput = Omit<AdMobConfigDto, 'updatedAt'>;

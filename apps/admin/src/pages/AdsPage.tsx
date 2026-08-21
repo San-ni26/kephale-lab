@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { adsApi } from '../adsApi';
 import { toast } from '../App';
+import AdMobTab from './ads/AdMobTab';
 import {
   BriefcaseIcon, PlusIcon, EditIcon, DeleteIcon, SearchIcon,
   TargetIcon, ClickIcon, ActivityIcon, EyeIcon, PlayIcon, PauseIcon,
@@ -275,7 +276,7 @@ function AnalyticsModal({ campaign, onClose }: { campaign: Campaign; onClose: ()
 
 // ── Main AdsPage ──────────────────────────────────────────────────────────────
 export default function AdsPage() {
-  const [tab, setTab] = useState<'campaigns' | 'advertisers'>('campaigns');
+  const [tab, setTab] = useState<'campaigns' | 'advertisers' | 'admob'>('campaigns');
   const [stats, setStats] = useState<any>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [advertisers, setAdvertisers] = useState<Advertiser[]>([]);
@@ -368,6 +369,9 @@ export default function AdsPage() {
         </button>
         <button className={`btn ${tab === 'advertisers' ? 'btn-primary' : 'btn-ghost'} btn-sm`} onClick={() => setTab('advertisers')}>
           <BriefcaseIcon size={14} /> Annonceurs ({advertisers.length})
+        </button>
+        <button className={`btn ${tab === 'admob' ? 'btn-primary' : 'btn-ghost'} btn-sm`} onClick={() => setTab('admob')} style={{ marginLeft: 'auto' }}>
+          <GlobeIcon size={14} /> Google AdMob
         </button>
       </div>
 
@@ -595,6 +599,9 @@ export default function AdsPage() {
       {analyticsModal && (
         <AnalyticsModal campaign={analyticsModal} onClose={() => setAnalyticsModal(null)} />
       )}
+
+      {/* ── GOOGLE ADMOB ── */}
+      {tab === 'admob' && <AdMobTab />}
     </div>
   );
 }

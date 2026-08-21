@@ -34,4 +34,9 @@ export const adsApi = {
   toggleCampaignStatus: (id: string) => req<any>('PATCH', `/admin/ads/campaigns/${id}/toggle-status`),
   deleteCampaign: (id: string) => req<any>('DELETE', `/admin/ads/campaigns/${id}`),
   getCampaignAnalytics: (id: string) => req<any>('GET', `/admin/ads/analytics/${id}`),
+
+  // Google AdMob config
+  getAdMobConfig: () => req<any>('GET', '/admin/ads/admob-config'),
+  saveAdMobConfig: (data: any) => req<any>('PUT', '/admin/ads/admob-config', data),
+  resetAdMobConfig: () => req<any>('DELETE', '/admin/ads/admob-config'),
 };

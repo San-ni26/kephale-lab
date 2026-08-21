@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Patch,
   Delete,
   Body,
@@ -140,6 +141,41 @@ export class AdminAdsController {
   @Get('analytics/:id')
   async getCampaignAnalytics(@Param('id') id: string) {
     const data = await this.adsService.getCampaignAnalytics(id);
+    return { success: true, data };
+  }
+
+  // ─── GOOGLE ADMOB CONFIG ──────────────────────────────────────────────────────
+
+  /**
+   * GET /admin/ads/admob-config
+   * Returns the current Google AdMob configuration (unit IDs, placements toggle)
+   */
+  @Get('admob-config')
+  async getAdMobConfig() {
+    const data = await this.adsService.getAdMobConfig();
+    return { success: true, data };
+  }
+
+  /**
+   * PUT /admin/ads/admob-config
+   * Save / update Google AdMob unit IDs and placement toggles
+   */
+  @Put('admob-config')
+  async saveAdMobConfig(@Body() body: any) {
+    if (!body?.android?.appId || !body?.ios?.appId) {
+      throw new BadRequestException({ success: false, error: { message: 'Les App IDs Android et iOS sont requis' } });
+    }
+    const data = await this.adsService.saveAdMobConfig(body);
+    return { success: true, data };
+  }
+
+  /**
+   * DELETE /admin/ads/admob-config
+   * Reset to Google official test Ad Unit IDs
+   */
+  @Delete('admob-config')
+  async resetAdMobConfig() {
+    const data = await this.adsService.resetAdMobConfig();
     return { success: true, data };
   }
 }

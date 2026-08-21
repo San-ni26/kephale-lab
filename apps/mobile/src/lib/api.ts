@@ -420,6 +420,8 @@ export const adsAPI = {
   }) => api.post('/ads/boost', data),
   getMyCampaigns: () => api.get('/ads/my-campaigns'),
   getMyAnalytics: (id: string) => api.get(`/ads/my-analytics/${id}`),
+  // Fetch live AdMob config (public — no auth)
+  getAdMobConfig: () => api.get('/ads/admob-config'),
 };
 
 export const adminAdsAPI = {
@@ -438,5 +440,9 @@ export const adminAdsAPI = {
   toggleCampaignStatus: (id: string) => api.patch(`/admin/ads/campaigns/${id}/toggle-status`),
   deleteCampaign: (id: string) => api.delete(`/admin/ads/campaigns/${id}`),
   getCampaignAnalytics: (id: string) => api.get(`/admin/ads/analytics/${id}`),
+  // AdMob config management
+  getAdMobConfig: () => api.get('/admin/ads/admob-config'),
+  saveAdMobConfig: (data: any) => api.put('/admin/ads/admob-config', data),
+  resetAdMobConfig: () => api.delete('/admin/ads/admob-config'),
 };
 
